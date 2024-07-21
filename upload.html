@@ -3,24 +3,62 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Upload Image for Compression</title>
+    <title>Potato Quality Image Compressor</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+        }
+        .container {
+            background-color: white;
+            padding: 2em;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+        }
+        input, select {
+            margin: 10px 0;
+            padding: 10px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        input[type="submit"] {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-size: 1.1em;
+        }
+        input[type="submit"]:hover {
+            background-color: #45a049;
+        }
+    </style>
 </head>
 <body>
-    <h1>Upload Image for Compression</h1>
-    <form action="/upload" method="post" enctype="multipart/form-data">
-        <label for="image">Select image to upload:</label>
-        <input type="file" name="image" id="image" accept="image/*" required><br><br>
-        
-        <label for="quality">Quality (1-100):</label>
-        <input type="number" name="quality" id="quality" min="1" max="100" value="75"><br><br>
-        
-        <label for="format">Output Format:</label>
-        <select name="format" id="format">
-            <option value="jpeg">JPEG</option>
-            <option value="png">PNG</option>
-        </select><br><br>
-        
-        <input type="submit" value="Upload and Compress">
-    </form>
+    <div class="container">
+        <h1>Potato Quality Image Compressor</h1>
+        <form action="/upload" method="post" enctype="multipart/form-data">
+            <label for="image">Image:</label>
+            <input type="file" name="image" id="image" accept="image/*" required>
+            
+            <label for="quality">Quality (1-100):</label>
+            <input type="number" name="quality" id="quality" min="1" max="100" value="75">
+            
+            <label for="format">Output Format:</label>
+            <select name="format" id="format">
+                <option value="jpeg">JPEG</option>
+                <option value="png">PNG</option>
+            </select>
+            
+            <input type="submit" value="Upload and Compress">
+        </form>
+    </div>
 </body>
 </html>

@@ -1,65 +1,115 @@
 package main
 
 import (
-	"fmt" // formatted I/O
-	"io" // basic I/O operations
-	"log" // logging
-	"net/http" // HTTP client and server implementations
-	"os" // OS functionality
+    "fmt"
+    "image"
+    "image/jpeg"
+    "image/png"
+    // "io"
+    "log"
+    "net/http"
+    "os"
+    "path/filepath"
+    "strconv"
+
+    "golang.org/x/image/draw"
 )
 
 func main() {
-	http.HandleFunc("/", handleRoot) // sets up the root route
-	http.HandleFunc("/upload", handleUpload) // sets up the upload route
+    http.HandleFunc("/", handleRoot)
+    http.HandleFunc("/upload", handleUpload)
+    http.HandleFunc("/upload.html", func(w http.ResponseWriter, r *http.Request) {
+    http.ServeFile(w, r, "upload.html")
+})
 
-	fmt.Println("Server starting on http://localhost:8080")
-	log.Fatal(http.ListenAndServe(":8080", nil)) // starts the server on port 8080
+    log.Println("Server starting on http://localhost:8080")
+    log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
 func handleRoot(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "Welcome to Potato Quality Image Compressor!")
+    http.Redirect(w, r, "/upload.html", http.StatusSeeOther)
 }
 
 func handleUpload(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+    if r.Method != http.MethodPost {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
 
-	// Parse the multipart form data
-	err := r.ParseMultipartForm(10 << 20) // 10 MB max
-	if err != nil {
-		http.Error(w, "Unable to parse form", http.StatusBadRequest)
-		return
-	}
+    err := r.ParseMultipartForm(10 << 20) // 10 MB max
+    if err != nil {
+        http.Error(w, "Unable to parse form", http.StatusBadRequest)
+        return
+    }
 
-	// Get the file from the request
-	file, handler, err := r.FormFile("image")
-	if err != nil {
-		http.Error(w, "Error retrieving the file", http.StatusBadRequest)
-		return
-	}
-	defer file.Close()
+    file, handler, err := r.FormFile("image")
+    if err != nil {
+        http.Error(w, "Error retrieving the file", http.StatusBadRequest)
+        return
+    }
+    defer file.Close()
 
-	// Create the uploads directory if it doesn't exist
-	if err := os.MkdirAll("./uploads", os.ModePerm); err != nil {
-		http.Error(w, "Unable to create upload directory", http.StatusInternalServerError)
-		return
-	}
+    log.Printf("Received file: %s\n", handler.Filename)
 
-	// Create a new file in the uploads directory
-	dst, err := os.Create(fmt.Sprintf("./uploads/%s", handler.Filename))
-	if err != nil {
-		http.Error(w, "Error creating the file", http.StatusInternalServerError)
-		return
-	}
-	defer dst.Close()
+    img, format, err := image.Decode(file)
+    if err != nil {
+        http.Error(w, "Error decoding image", http.StatusBadRequest)
+        return
+    }
 
-	// Copy the uploaded file to the filesystem
-	if _, err := io.Copy(dst, file); err != nil {
-		http.Error(w, "Error copying the file", http.StatusInternalServerError)
-		return
-	}
+    quality, _ := strconv.Atoi(r.FormValue("quality"))
+    if quality == 0 {
+        quality = 75 // default quality
+    }
 
-	fmt.Fprintf(w, "File uploaded successfully: %s", handler.Filename)
+    outputFormat := r.FormValue("format")
+    if outputFormat == "" {
+        outputFormat = format // default to input format
+    }
+
+    compressedImg := compressImage(img, quality)
+
+    if err := os.MkdirAll("./uploads", os.ModePerm); err != nil {
+        http.Error(w, "Unable to create upload directory", http.StatusInternalServerError)
+        return
+    }
+
+    outputPath := filepath.Join("./uploads", "compressed_"+handler.Filename)
+    out, err := os.Create(outputPath)
+    if err != nil {
+        http.Error(w, "Error creating the file", http.StatusInternalServerError)
+        return
+    }
+    defer out.Close()
+
+    switch outputFormat {
+    case "jpeg", "jpg":
+        jpeg.Encode(out, compressedImg, &jpeg.Options{Quality: quality})
+    case "png":
+        png.Encode(out, compressedImg)
+    default:
+        http.Error(w, "Unsupported output format", http.StatusBadRequest)
+        return
+    }
+
+    log.Printf("File compressed and saved as: %s\n", outputPath)
+    fmt.Fprintf(w, "File compressed and saved as: %s", outputPath)
+}
+
+func compressImage(img image.Image, quality int) image.Image {
+    bounds := img.Bounds()
+    width, height := bounds.Dx(), bounds.Dy()
+    newWidth, newHeight := width, height
+
+    // Calculate new dimensions based on quality
+    scaleFactor := float64(quality) / 100.0
+    if width > 1000 || height > 1000 {
+        newWidth = int(float64(width) * scaleFactor)
+        newHeight = int(float64(height) * scaleFactor)
+    }
+
+    newImg := image.NewRGBA(image.Rect(0, 0, newWidth, newHeight))
+    draw.ApproxBiLinear.Scale(newImg, newImg.Bounds(), img, img.Bounds(), draw.Over, nil)
+
+    return newImg
 }

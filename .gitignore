@@ -1,0 +1,24 @@
+# Ignore uploads folder
+/uploads/
+
+# Ignore Go binary
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Ignore Go test binary
+*.test
+
+# Ignore Go coverage output
+*.out
+
+# Ignore any .env files
+*.env
+
+# Ignore IDE specific files
+.vscode/
+.idea/
+*.swp
+*.swo

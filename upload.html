@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Upload Image for Compression</title>
+</head>
+<body>
+    <h1>Upload Image for Compression</h1>
+    <form action="/upload" method="post" enctype="multipart/form-data">
+        <label for="image">Select image to upload:</label>
+        <input type="file" name="image" id="image" accept="image/*" required><br><br>
+        
+        <label for="quality">Quality (1-100):</label>
+        <input type="number" name="quality" id="quality" min="1" max="100" value="75"><br><br>
+        
+        <label for="format">Output Format:</label>
+        <select name="format" id="format">
+            <option value="jpeg">JPEG</option>
+            <option value="png">PNG</option>
+        </select><br><br>
+        
+        <input type="submit" value="Upload and Compress">
+    </form>
+</body>
+</html>

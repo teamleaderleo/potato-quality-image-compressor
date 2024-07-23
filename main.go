@@ -5,13 +5,13 @@ import (
     "image"
     "image/jpeg"
     "image/png"
-    // "io"
     "log"
     "net/http"
     "os"
     "path/filepath"
     "strconv"
 
+    "github.com/chai2010/webp"
     "golang.org/x/image/draw"
 )
 
@@ -19,8 +19,8 @@ func main() {
     http.HandleFunc("/", handleRoot)
     http.HandleFunc("/upload", handleUpload)
     http.HandleFunc("/upload.html", func(w http.ResponseWriter, r *http.Request) {
-    http.ServeFile(w, r, "upload.html")
-})
+        http.ServeFile(w, r, "upload.html")
+    })
 
     log.Println("Server starting on http://localhost:8080")
     log.Fatal(http.ListenAndServe(":8080", nil))
@@ -87,6 +87,12 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
         jpeg.Encode(out, compressedImg, &jpeg.Options{Quality: quality})
     case "png":
         png.Encode(out, compressedImg)
+    case "webp":
+        err = webp.Encode(out, compressedImg, &webp.Options{Lossless: false, Quality: float32(quality)})
+        if err != nil {
+            http.Error(w, "Error encoding WebP image", http.StatusInternalServerError)
+            return
+        }
     default:
         http.Error(w, "Unsupported output format", http.StatusBadRequest)
         return

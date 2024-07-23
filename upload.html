@@ -7,26 +7,32 @@
     <style>
         body {
             font-family: Arial, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-            background-color: #f0f0f0;
-        }
-        .container {
-            background-color: white;
-            padding: 2em;
-            border-radius: 10px;
-            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
         }
         h1 {
             color: #333;
         }
-        input, select {
-            margin: 10px 0;
-            padding: 10px;
+        form {
+            background-color: #f4f4f4;
+            padding: 20px;
+            border-radius: 5px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        input[type="file"],
+        input[type="number"],
+        select,
+        input[type="submit"] {
             width: 100%;
+            padding: 10px;
+            margin-bottom: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
             box-sizing: border-box;
         }
         input[type="submit"] {
@@ -34,7 +40,6 @@
             color: white;
             border: none;
             cursor: pointer;
-            font-size: 1.1em;
         }
         input[type="submit"]:hover {
             background-color: #45a049;
@@ -42,23 +47,22 @@
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>Potato Quality Image Compressor</h1>
-        <form action="/upload" method="post" enctype="multipart/form-data">
-            <label for="image">Image:</label>
-            <input type="file" name="image" id="image" accept="image/*" required>
-            
-            <label for="quality">Quality (1-100):</label>
-            <input type="number" name="quality" id="quality" min="1" max="100" value="75">
-            
-            <label for="format">Output Format:</label>
-            <select name="format" id="format">
-                <option value="jpeg">JPEG</option>
-                <option value="png">PNG</option>
-            </select>
-            
-            <input type="submit" value="Upload and Compress">
-        </form>
-    </div>
+    <h1>Potato Quality Image Compressor</h1>
+    <form action="/upload" method="post" enctype="multipart/form-data">
+        <label for="image">Image:</label>
+        <input type="file" name="image" id="image" accept="image/*" required>
+        
+        <label for="quality">Quality (1-100):</label>
+        <input type="number" name="quality" id="quality" min="1" max="100" value="75">
+        
+        <label for="format">Output Format:</label>
+        <select name="format" id="format">
+            <option value="jpeg">JPEG</option>
+            <option value="png">PNG</option>
+            <option value="webp">WebP</option>
+        </select>
+        
+        <input type="submit" value="Compress Image">
+    </form>
 </body>
 </html>

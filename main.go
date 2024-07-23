@@ -1,18 +1,19 @@
 package main
 
 import (
-    "fmt"
-    "image"
-    "image/jpeg"
-    "image/png"
-    "log"
-    "net/http"
-    "os"
-    "path/filepath"
-    "strconv"
+	"fmt"
+	"image"
+	"image/jpeg"
+	"image/png"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 
-    "github.com/chai2010/webp"
-    "golang.org/x/image/draw"
+	"github.com/chai2010/webp"
+	"golang.org/x/image/draw"
 )
 
 func main() {
@@ -74,7 +75,24 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    outputPath := filepath.Join("./uploads", "compressed_"+handler.Filename)
+    // Get the file extension from the original filename
+    origExt := filepath.Ext(handler.Filename)
+    baseFileName := strings.TrimSuffix(handler.Filename, origExt)
+
+    // Determine the new file extension based on the output format
+    var newExt string
+    switch outputFormat {
+    case "jpeg", "jpg":
+        newExt = ".jpg"
+    case "png":
+        newExt = ".png"
+    case "webp":
+        newExt = ".webp"
+    default:
+        newExt = origExt // Use original extension if format is not recognized
+    }
+
+    outputPath := filepath.Join("./uploads", "compressed_"+baseFileName+newExt)
     out, err := os.Create(outputPath)
     if err != nil {
         http.Error(w, "Error creating the file", http.StatusInternalServerError)

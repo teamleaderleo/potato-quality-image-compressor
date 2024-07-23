@@ -1,16 +1,16 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/jpeg"
 	"image/png"
+	"io"
 	"log"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
-	"strings"
 
 	"github.com/chai2010/webp"
 	"golang.org/x/image/draw"
@@ -18,45 +18,29 @@ import (
 
 func main() {
     http.HandleFunc("/", handleRoot)
-    http.HandleFunc("/upload", handleUpload)
-    http.HandleFunc("/upload.html", func(w http.ResponseWriter, r *http.Request) {
-        http.ServeFile(w, r, "upload.html")
-    })
+    http.HandleFunc("/compress", handleCompress)
+    http.HandleFunc("/batch-compress", handleBatchCompress)
 
     log.Println("Server starting on http://localhost:8080")
     log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
 func handleRoot(w http.ResponseWriter, r *http.Request) {
-    http.Redirect(w, r, "/upload.html", http.StatusSeeOther)
+    fmt.Fprintf(w, "Image Compression API")
 }
 
-func handleUpload(w http.ResponseWriter, r *http.Request) {
+func handleCompress(w http.ResponseWriter, r *http.Request) {
     if r.Method != http.MethodPost {
         http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
         return
     }
 
-    err := r.ParseMultipartForm(10 << 20) // 10 MB max
-    if err != nil {
-        http.Error(w, "Unable to parse form", http.StatusBadRequest)
-        return
-    }
-
-    file, handler, err := r.FormFile("image")
+    file, header, err := r.FormFile("image")
     if err != nil {
         http.Error(w, "Error retrieving the file", http.StatusBadRequest)
         return
     }
     defer file.Close()
-
-    log.Printf("Received file: %s\n", handler.Filename)
-
-    img, format, err := image.Decode(file)
-    if err != nil {
-        http.Error(w, "Error decoding image", http.StatusBadRequest)
-        return
-    }
 
     quality, _ := strconv.Atoi(r.FormValue("quality"))
     if quality == 0 {
@@ -65,59 +49,107 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 
     outputFormat := r.FormValue("format")
     if outputFormat == "" {
-        outputFormat = format // default to input format
+        outputFormat = "jpeg" // default format
+    }
+
+    compressedImageBytes, err := compressAndEncodeImage(file, quality, outputFormat)
+    if err != nil {
+        http.Error(w, "Error compressing image", http.StatusInternalServerError)
+        return
+    }
+
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]interface{}{
+        "message": "Image compressed successfully",
+        "filename": header.Filename,
+        "size": len(compressedImageBytes),
+    })
+}
+
+func handleBatchCompress(w http.ResponseWriter, r *http.Request) {
+    if r.Method != http.MethodPost {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+
+    err := r.ParseMultipartForm(32 << 20) // 32 MB max
+    if err != nil {
+        http.Error(w, "Unable to parse form", http.StatusBadRequest)
+        return
+    }
+
+    files := r.MultipartForm.File["images"]
+    quality, _ := strconv.Atoi(r.FormValue("quality"))
+    if quality == 0 {
+        quality = 75 // default quality
+    }
+    outputFormat := r.FormValue("format")
+    if outputFormat == "" {
+        outputFormat = "jpeg" // default format
+    }
+
+    results := make([]map[string]interface{}, 0, len(files))
+
+    for _, fileHeader := range files {
+        file, err := fileHeader.Open()
+        if err != nil {
+            results = append(results, map[string]interface{}{
+                "filename": fileHeader.Filename,
+                "error": "Error opening file",
+            })
+            continue
+        }
+        defer file.Close()
+
+        compressedImageBytes, err := compressAndEncodeImage(file, quality, outputFormat)
+        if err != nil {
+            results = append(results, map[string]interface{}{
+                "filename": fileHeader.Filename,
+                "error": "Error compressing image",
+            })
+            continue
+        }
+
+        results = append(results, map[string]interface{}{
+            "filename": fileHeader.Filename,
+            "size": len(compressedImageBytes),
+        })
+    }
+
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]interface{}{
+        "message": "Batch compression complete",
+        "results": results,
+    })
+}
+
+func compressAndEncodeImage(file io.Reader, quality int, outputFormat string) ([]byte, error) {
+    img, _, err := image.Decode(file)
+    if err != nil {
+        return nil, err
     }
 
     compressedImg := compressImage(img, quality)
 
-    if err := os.MkdirAll("./uploads", os.ModePerm); err != nil {
-        http.Error(w, "Unable to create upload directory", http.StatusInternalServerError)
-        return
-    }
+    var buf []byte
+    outputBuf := bytes.NewBuffer(buf)
 
-    // Get the file extension from the original filename
-    origExt := filepath.Ext(handler.Filename)
-    baseFileName := strings.TrimSuffix(handler.Filename, origExt)
-
-    // Determine the new file extension based on the output format
-    var newExt string
     switch outputFormat {
     case "jpeg", "jpg":
-        newExt = ".jpg"
+        err = jpeg.Encode(outputBuf, compressedImg, &jpeg.Options{Quality: quality})
     case "png":
-        newExt = ".png"
+        err = png.Encode(outputBuf, compressedImg)
     case "webp":
-        newExt = ".webp"
+        err = webp.Encode(outputBuf, compressedImg, &webp.Options{Lossless: false, Quality: float32(quality)})
     default:
-        newExt = origExt // Use original extension if format is not recognized
+        return nil, fmt.Errorf("unsupported format: %s", outputFormat)
     }
 
-    outputPath := filepath.Join("./uploads", "compressed_"+baseFileName+newExt)
-    out, err := os.Create(outputPath)
     if err != nil {
-        http.Error(w, "Error creating the file", http.StatusInternalServerError)
-        return
-    }
-    defer out.Close()
-
-    switch outputFormat {
-    case "jpeg", "jpg":
-        jpeg.Encode(out, compressedImg, &jpeg.Options{Quality: quality})
-    case "png":
-        png.Encode(out, compressedImg)
-    case "webp":
-        err = webp.Encode(out, compressedImg, &webp.Options{Lossless: false, Quality: float32(quality)})
-        if err != nil {
-            http.Error(w, "Error encoding WebP image", http.StatusInternalServerError)
-            return
-        }
-    default:
-        http.Error(w, "Unsupported output format", http.StatusBadRequest)
-        return
+        return nil, err
     }
 
-    log.Printf("File compressed and saved as: %s\n", outputPath)
-    fmt.Fprintf(w, "File compressed and saved as: %s", outputPath)
+    return outputBuf.Bytes(), nil
 }
 
 func compressImage(img image.Image, quality int) image.Image {

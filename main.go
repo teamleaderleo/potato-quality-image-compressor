@@ -22,7 +22,7 @@ func main() {
     http.HandleFunc("/", handleRoot)
     http.HandleFunc("/compress", handleCompress)
     http.HandleFunc("/batch-compress", handleBatchCompress)
-    http.HandleFunc("/test", handleTest)
+    // http.HandleFunc("/test", handleTest)
 
     port := os.Getenv("PORT")
     if port == "" {
@@ -33,9 +33,9 @@ func main() {
     log.Fatal(http.ListenAndServe(":"+port, nil))
 }
 
-func handleTest(w http.ResponseWriter, r *http.Request) {
-    http.ServeFile(w, r, "test.html")
-}
+// func handleTest(w http.ResponseWriter, r *http.Request) {
+//     http.ServeFile(w, r, "test.html")
+// }
 
 func handleRoot(w http.ResponseWriter, r *http.Request) {
     fmt.Fprintf(w, "Image Compression API")

@@ -22,15 +22,18 @@ func main() {
     http.HandleFunc("/", handleRoot)
     http.HandleFunc("/compress", handleCompress)
     http.HandleFunc("/batch-compress", handleBatchCompress)
-    // http.HandleFunc("/test", handleTest)
 
-    port := os.Getenv("PORT")
-    if port == "" {
-        port = "8080" // default port
+    if os.Getenv("AWS_LAMBDA_FUNCTION_NAME") != "" {
+        startLambda()
+    } else {
+        port := os.Getenv("PORT")
+        if port == "" {
+            port = "8080" // default port
+        }
+
+        log.Printf("Server starting on http://localhost:%s", port)
+        log.Fatal(http.ListenAndServe(":"+port, nil))
     }
-
-    log.Printf("Server starting on http://localhost:%s", port)
-    log.Fatal(http.ListenAndServe(":"+port, nil))
 }
 
 // func handleTest(w http.ResponseWriter, r *http.Request) {

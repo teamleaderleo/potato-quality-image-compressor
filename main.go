@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 
 	"github.com/chai2010/webp"
@@ -22,8 +23,13 @@ func main() {
     http.HandleFunc("/batch-compress", handleBatchCompress)
     http.HandleFunc("/test", handleTest)
 
-    log.Println("Server starting on http://localhost:8080")
-    log.Fatal(http.ListenAndServe(":8080", nil))
+    port := os.Getenv("PORT")
+    if port == "" {
+        port = "8080" // default port
+    }
+
+    log.Printf("Server starting on http://localhost:%s", port)
+    log.Fatal(http.ListenAndServe(":"+port, nil))
 }
 
 func handleTest(w http.ResponseWriter, r *http.Request) {

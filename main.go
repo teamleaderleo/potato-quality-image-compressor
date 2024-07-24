@@ -20,9 +20,14 @@ func main() {
     http.HandleFunc("/", handleRoot)
     http.HandleFunc("/compress", handleCompress)
     http.HandleFunc("/batch-compress", handleBatchCompress)
+    http.HandleFunc("/test", handleTest)
 
     log.Println("Server starting on http://localhost:8080")
     log.Fatal(http.ListenAndServe(":8080", nil))
+}
+
+func handleTest(w http.ResponseWriter, r *http.Request) {
+    http.ServeFile(w, r, "test.html")
 }
 
 func handleRoot(w http.ResponseWriter, r *http.Request) {

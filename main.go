@@ -1,8 +1,8 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/chai2010/webp"
@@ -48,33 +49,33 @@ func handleCompress(w http.ResponseWriter, r *http.Request) {
 
     file, header, err := r.FormFile("image")
     if err != nil {
-        http.Error(w, "Error retrieving the file", http.StatusBadRequest)
+        http.Error(w, "Error retrieving the file: "+err.Error(), http.StatusBadRequest)
         return
     }
     defer file.Close()
 
-    quality, _ := strconv.Atoi(r.FormValue("quality"))
-    if quality == 0 {
+    quality, err := strconv.Atoi(r.FormValue("quality"))
+    if err != nil || quality < 1 || quality > 100 {
         quality = 75 // default quality
     }
 
     outputFormat := r.FormValue("format")
     if outputFormat == "" {
-        outputFormat = "jpeg" // default format
+        outputFormat = "webp" // default format
     }
 
     compressedImageBytes, err := compressAndEncodeImage(file, quality, outputFormat)
     if err != nil {
-        http.Error(w, "Error compressing image", http.StatusInternalServerError)
+        http.Error(w, "Error compressing image: "+err.Error(), http.StatusInternalServerError)
         return
     }
 
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(map[string]interface{}{
-        "message": "Image compressed successfully",
-        "filename": header.Filename,
-        "size": len(compressedImageBytes),
-    })
+    w.Header().Set("Content-Type", fmt.Sprintf("image/%s", outputFormat))
+    w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s.%s", filepath.Base(header.Filename), outputFormat))
+    _, err = w.Write(compressedImageBytes)
+    if err != nil {
+        log.Printf("Error writing response: %v", err)
+    }
 }
 
 func handleBatchCompress(w http.ResponseWriter, r *http.Request) {
@@ -85,94 +86,106 @@ func handleBatchCompress(w http.ResponseWriter, r *http.Request) {
 
     err := r.ParseMultipartForm(32 << 20) // 32 MB max
     if err != nil {
-        http.Error(w, "Unable to parse form", http.StatusBadRequest)
+        http.Error(w, "Unable to parse form: "+err.Error(), http.StatusBadRequest)
         return
     }
 
     files := r.MultipartForm.File["images"]
-    quality, _ := strconv.Atoi(r.FormValue("quality"))
-    if quality == 0 {
+    quality, err := strconv.Atoi(r.FormValue("quality"))
+    if err != nil || quality < 1 || quality > 100 {
         quality = 75 // default quality
     }
     outputFormat := r.FormValue("format")
     if outputFormat == "" {
-        outputFormat = "jpeg" // default format
+        outputFormat = "webp" // default format
     }
 
-    results := make([]map[string]interface{}, 0, len(files))
+    buf := new(bytes.Buffer)
+    zipWriter := zip.NewWriter(buf)
 
     for _, fileHeader := range files {
         file, err := fileHeader.Open()
         if err != nil {
-            results = append(results, map[string]interface{}{
-                "filename": fileHeader.Filename,
-                "error": "Error opening file",
-            })
+            log.Printf("Error opening file %s: %v", fileHeader.Filename, err)
             continue
         }
-        defer file.Close()
 
         compressedImageBytes, err := compressAndEncodeImage(file, quality, outputFormat)
+        file.Close()
         if err != nil {
-            results = append(results, map[string]interface{}{
-                "filename": fileHeader.Filename,
-                "error": "Error compressing image",
-            })
+            log.Printf("Error compressing file %s: %v", fileHeader.Filename, err)
             continue
         }
 
-        results = append(results, map[string]interface{}{
-            "filename": fileHeader.Filename,
-            "size": len(compressedImageBytes),
-        })
+        zipFile, err := zipWriter.Create(fmt.Sprintf("%s.%s", filepath.Base(fileHeader.Filename), outputFormat))
+        if err != nil {
+            log.Printf("Error creating zip entry for %s: %v", fileHeader.Filename, err)
+            continue
+        }
+
+        _, err = zipFile.Write(compressedImageBytes)
+        if err != nil {
+            log.Printf("Error writing to zip for %s: %v", fileHeader.Filename, err)
+        }
     }
 
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(map[string]interface{}{
-        "message": "Batch compression complete",
-        "results": results,
-    })
+    zipWriter.Close()
+
+    w.Header().Set("Content-Type", "application/zip")
+    w.Header().Set("Content-Disposition", "attachment; filename=compressed_images.zip")
+    _, err = w.Write(buf.Bytes())
+    if err != nil {
+        log.Printf("Error writing zip response: %v", err)
+    }
 }
 
 func compressAndEncodeImage(file io.Reader, quality int, outputFormat string) ([]byte, error) {
     img, _, err := image.Decode(file)
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("error decoding image: %v", err)
     }
 
     compressedImg := compressImage(img, quality)
 
-    var buf []byte
-    outputBuf := bytes.NewBuffer(buf)
-
+    var buf bytes.Buffer
     switch outputFormat {
-    case "jpeg", "jpg":
-        err = jpeg.Encode(outputBuf, compressedImg, &jpeg.Options{Quality: quality})
-    case "png":
-        err = png.Encode(outputBuf, compressedImg)
     case "webp":
-        err = webp.Encode(outputBuf, compressedImg, &webp.Options{Lossless: false, Quality: float32(quality)})
+        err = webp.Encode(&buf, compressedImg, &webp.Options{Quality: float32(quality)})
+    case "jpeg", "jpg":
+        err = jpeg.Encode(&buf, compressedImg, &jpeg.Options{Quality: quality})
+    case "png":
+        err = png.Encode(&buf, compressedImg)
     default:
         return nil, fmt.Errorf("unsupported format: %s", outputFormat)
     }
 
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("error encoding image to %s: %v", outputFormat, err)
     }
 
-    return outputBuf.Bytes(), nil
+    return buf.Bytes(), nil
 }
 
 func compressImage(img image.Image, quality int) image.Image {
+    // If quality is 100, return the original image
+    if quality == 100 {
+        return img
+    }
+
     bounds := img.Bounds()
     width, height := bounds.Dx(), bounds.Dy()
-    newWidth, newHeight := width, height
-
+    
     // Calculate new dimensions based on quality
     scaleFactor := float64(quality) / 100.0
-    if width > 1000 || height > 1000 {
-        newWidth = int(float64(width) * scaleFactor)
-        newHeight = int(float64(height) * scaleFactor)
+    newWidth := int(float64(width) * scaleFactor)
+    newHeight := int(float64(height) * scaleFactor)
+
+    // Ensure minimum dimensions
+    if newWidth < 10 {
+        newWidth = 10
+    }
+    if newHeight < 10 {
+        newHeight = 10
     }
 
     newImg := image.NewRGBA(image.Rect(0, 0, newWidth, newHeight))

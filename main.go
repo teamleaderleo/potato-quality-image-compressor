@@ -19,6 +19,7 @@ import (
 )
 
 func main() {
+    InitMetrics()
     http.HandleFunc("/", handleRoot)
     http.HandleFunc("/compress", handleCompress)
     http.HandleFunc("/batch-compress", handleBatchCompress)

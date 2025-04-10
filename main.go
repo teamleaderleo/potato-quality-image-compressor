@@ -15,6 +15,7 @@ import (
 	"strconv"
 
 	"github.com/chai2010/webp"
+    "github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/image/draw"
 )
 
@@ -46,13 +47,23 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleCompress(w http.ResponseWriter, r *http.Request) {
+    timer := prometheus.NewTimer(requestDuration.WithLabelValues("compress"))
+    defer timer.ObserveDuration()
+
+    status := "success"
+    defer func() {
+        requestCounter.WithLabelValues("compress", status).Inc()
+    }()
+
     if r.Method != http.MethodPost {
+        status = "method_not_allowed"
         http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
         return
     }
 
     file, header, err := r.FormFile("image")
     if err != nil {
+        status = "bad_request"
         http.Error(w, "Error retrieving the file: "+err.Error(), http.StatusBadRequest)
         return
     }
@@ -70,6 +81,7 @@ func handleCompress(w http.ResponseWriter, r *http.Request) {
 
     compressedImageBytes, err := compressAndEncodeImage(file, quality, outputFormat)
     if err != nil {
+        status = "compression_error"
         http.Error(w, "Error compressing image: "+err.Error(), http.StatusInternalServerError)
         return
     }

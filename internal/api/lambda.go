@@ -65,6 +65,6 @@ func handleLambdaRequest(ctx context.Context, request events.APIGatewayProxyRequ
     return resp, nil
 }
 
-func startLambda() {
+func StartLambda() {
     lambda.Start(handleLambdaRequest)
 }

@@ -17,10 +17,16 @@ import (
 	"github.com/chai2010/webp"
     "github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/image/draw"
+
+    "github.com/teamleaderleo/potato-quality-image-compressor/internal/api"
+    "github.com/teamleaderleo/potato-quality-image-compressor/internal/metrics"
 )
 
 func main() {
-    InitMetrics()
+    metrics.Init()
+
+    _ = api.NewService() 
+
     http.HandleFunc("/", handleRoot)
     http.HandleFunc("/compress", handleCompress)
     http.HandleFunc("/batch-compress", handleBatchCompress)

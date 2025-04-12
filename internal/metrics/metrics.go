@@ -1,4 +1,4 @@
-package main
+package metrics
 
 import (
 	"github.com/prometheus/client_golang/prometheus"
@@ -25,9 +25,17 @@ var (
 	)
 )
 
-func InitMetrics() {
+func Init() {
 	prometheus.MustRegister(requestCounter)
 	prometheus.MustRegister(requestDuration)
 	
 	http.Handle("/metrics", promhttp.Handler())
+}
+
+func GetRequestCounter() *prometheus.CounterVec {
+	return requestCounter
+}
+
+func GetRequestDuration() *prometheus.HistogramVec {
+	return requestDuration
 }

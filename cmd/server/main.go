@@ -32,7 +32,7 @@ func main() {
     http.HandleFunc("/batch-compress", handleBatchCompress)
 
     if os.Getenv("AWS_LAMBDA_FUNCTION_NAME") != "" {
-        startLambda()
+        api.StartLambda()
     } else {
         port := os.Getenv("PORT")
         if port == "" {

@@ -1,6 +1,8 @@
 package metrics
 
 import (
+	"fmt"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"net/http"
@@ -25,11 +27,16 @@ var (
 	)
 )
 
-func Init() {
-	prometheus.MustRegister(requestCounter)
-	prometheus.MustRegister(requestDuration)
-	
-	http.Handle("/metrics", promhttp.Handler())
+func Init() error {
+    if err := prometheus.Register(requestCounter); err != nil {
+        return fmt.Errorf("failed to register request counter: %w", err)
+    }
+    if err := prometheus.Register(requestDuration); err != nil {
+        return fmt.Errorf("failed to register request duration: %w", err)
+    }
+    
+    http.Handle("/metrics", promhttp.Handler())
+    return nil
 }
 
 func GetRequestCounter() *prometheus.CounterVec {

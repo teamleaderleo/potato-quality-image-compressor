@@ -13,7 +13,10 @@ import (
 )
 
 func main() {
-    metrics.Init()
+    err := metrics.Init()
+    if err != nil {
+        log.Fatalf("Failed to initialize metrics: %v", err)
+    }
 
     service := api.NewService()
 

@@ -22,3 +22,6 @@
 .idea/
 *.swp
 *.swo
+
+# Ignore compressed .webp
+*.webp

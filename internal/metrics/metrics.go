@@ -39,3 +39,7 @@ func GetRequestCounter() *prometheus.CounterVec {
 func GetRequestDuration() *prometheus.HistogramVec {
 	return requestDuration
 }
+
+func NewTimer(endpoint string) *prometheus.Timer {
+    return prometheus.NewTimer(requestDuration.WithLabelValues(endpoint))
+}

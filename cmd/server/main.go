@@ -15,7 +15,6 @@ import (
 	"strconv"
 
 	"github.com/chai2010/webp"
-    "github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/image/draw"
 
     "github.com/teamleaderleo/potato-quality-image-compressor/internal/api"
@@ -53,12 +52,12 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleCompress(w http.ResponseWriter, r *http.Request) {
-    timer := prometheus.NewTimer(requestDuration.WithLabelValues("compress"))
+    timer := metrics.NewTimer("compress")
     defer timer.ObserveDuration()
 
     status := "success"
     defer func() {
-        requestCounter.WithLabelValues("compress", status).Inc()
+        metrics.GetRequestCounter().WithLabelValues("compress", status).Inc()
     }()
 
     if r.Method != http.MethodPost {

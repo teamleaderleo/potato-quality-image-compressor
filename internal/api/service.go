@@ -164,6 +164,13 @@ func (s *Service) HandleCompress(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// BatchResult represents a result from batch image processing
+type BatchResult struct {
+	filename string
+	result   CompressionResult
+	err      error
+}
+
 // HandleBatchCompress handles batch image compression requests
 func (s *Service) HandleBatchCompress(w http.ResponseWriter, r *http.Request) {
 	timer := metrics.NewTimer("batch-compress")
@@ -201,12 +208,8 @@ func (s *Service) HandleBatchCompress(w http.ResponseWriter, r *http.Request) {
 	buf := new(bytes.Buffer)
 	zipWriter := zip.NewWriter(buf)
 
-	// Process each file concurrently
-	resultChan := make(chan struct {
-		filename string
-		result   CompressionResult
-		err      error
-	}, len(files))
+	// Create channel for results
+	resultChan := make(chan BatchResult, len(files))
 	
 	var wg sync.WaitGroup
 	for _, fileHeader := range files {
@@ -217,11 +220,7 @@ func (s *Service) HandleBatchCompress(w http.ResponseWriter, r *http.Request) {
 			
 			file, err := fh.Open()
 			if err != nil {
-				resultChan <- struct {
-					filename string
-					result   CompressionResult
-					err      error
-				}{
+				resultChan <- BatchResult{
 					filename: fh.Filename,
 					err:      err,
 				}
@@ -231,11 +230,7 @@ func (s *Service) HandleBatchCompress(w http.ResponseWriter, r *http.Request) {
 
 			fileBytes, err := io.ReadAll(file)
 			if err != nil {
-				resultChan <- struct {
-					filename string
-					result   CompressionResult
-					err      error
-				}{
+				resultChan <- BatchResult{
 					filename: fh.Filename,
 					err:      err,
 				}
@@ -251,11 +246,7 @@ func (s *Service) HandleBatchCompress(w http.ResponseWriter, r *http.Request) {
 				algorithm,
 			)
 			
-			resultChan <- struct {
-				filename string
-				result   CompressionResult
-				err      error
-			}{
+			resultChan <- BatchResult{
 				filename: fh.Filename,
 				result:   result,
 				err:      err,

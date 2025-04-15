@@ -1,200 +1,382 @@
 package api
 
 import (
-    "archive/zip"
-    "bytes"
-    "fmt"
-    "image"
-    "image/jpeg"
-    "image/png"
+	"archive/zip"
+	"bytes"
+	"fmt"
+	"log"
+	"net/http"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"time"
     "io"
-    "log"
-    "net/http"
-    "path/filepath"
-    "strconv"
 
-    "github.com/chai2010/webp"
-    "golang.org/x/image/draw"
-    
-    "github.com/teamleaderleo/potato-quality-image-compressor/internal/metrics"
+	"github.com/teamleaderleo/potato-quality-image-compressor/internal/compression"
+	"github.com/teamleaderleo/potato-quality-image-compressor/internal/metrics"
+	"github.com/teamleaderleo/potato-quality-image-compressor/internal/worker"
 )
 
-type Service struct {}
+// Service handles the API endpoints for image compression
+type Service struct {
+	workerPool     *worker.Pool
+	processor      *compression.ImageProcessor
+	defaultQuality int
+	defaultFormat  string
+	defaultAlgorithm string
+}
 
+// ServiceConfig contains configuration for the Service
+type ServiceConfig struct {
+	WorkerCount     int
+	JobQueueSize    int
+	DefaultQuality  int
+	DefaultFormat   string
+	DefaultAlgorithm string
+	EnableMetrics   bool
+}
+
+// DefaultServiceConfig returns the default service configuration
+func DefaultServiceConfig() ServiceConfig {
+	return ServiceConfig{
+		WorkerCount:     runtime.NumCPU(),
+		JobQueueSize:    runtime.NumCPU() * 4,
+		DefaultQuality:  75,
+		DefaultFormat:   "webp",
+		DefaultAlgorithm: "scale",
+		EnableMetrics:   true,
+	}
+}
+
+// NewService creates a new service with default configuration
 func NewService() *Service {
-	return &Service{}
+	return NewServiceWithConfig(DefaultServiceConfig())
 }
 
+// NewServiceWithConfig creates a new service with the given configuration
+func NewServiceWithConfig(config ServiceConfig) *Service {
+	// Create worker pool
+	workerPool := worker.NewPool(config.WorkerCount, config.JobQueueSize, config.EnableMetrics)
+	
+	// Create image processor
+	processor := compression.NewImageProcessor()
+	
+	// Set default algorithm if specified
+	if config.DefaultAlgorithm != "scale" {
+		processor.SetDefaultAlgorithm(config.DefaultAlgorithm)
+	}
+
+	// Start a goroutine to periodically update memory usage metrics
+	if config.EnableMetrics {
+		go func() {
+			ticker := time.NewTicker(10 * time.Second)
+			defer ticker.Stop()
+
+			var m runtime.MemStats
+			for range ticker.C {
+				runtime.ReadMemStats(&m)
+				metrics.UpdateMemoryUsage(m.Alloc)
+			}
+		}()
+	}
+
+	return &Service{
+		workerPool:      workerPool,
+		processor:       processor,
+		defaultQuality:  config.DefaultQuality,
+		defaultFormat:   config.DefaultFormat,
+		defaultAlgorithm: config.DefaultAlgorithm,
+	}
+}
+
+// HandleCompress handles single image compression requests
 func (s *Service) HandleCompress(w http.ResponseWriter, r *http.Request) {
-    timer := metrics.NewTimer("compress")
-    defer timer.ObserveDuration()
+	timer := metrics.NewTimer("compress")
+	defer timer.ObserveDuration()
 
-    status := "success"
-    defer func() {
-        metrics.GetRequestCounter().WithLabelValues("compress", status).Inc()
-    }()
+	status := "success"
+	defer func() {
+		metrics.GetRequestCounter().WithLabelValues("compress", status).Inc()
+	}()
 
-    if r.Method != http.MethodPost {
-        status = "method_not_allowed"
-        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-        return
-    }
+	if r.Method != http.MethodPost {
+		status = "method_not_allowed"
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 
-    file, header, err := r.FormFile("image")
-    if err != nil {
-        status = "bad_request"
-        http.Error(w, "Error retrieving the file: "+err.Error(), http.StatusBadRequest)
-        return
-    }
-    defer file.Close()
+	file, header, err := r.FormFile("image")
+	if err != nil {
+		status = "bad_request"
+		http.Error(w, "Error retrieving the file: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
 
-    quality, err := strconv.Atoi(r.FormValue("quality"))
-    if err != nil || quality < 1 || quality > 100 {
-        quality = 75 // default quality
-    }
+	// Read file into memory to get original size for metrics
+	fileBytes, err := io.ReadAll(file)
+	if err != nil {
+		status = "read_error"
+		http.Error(w, "Error reading file: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-    outputFormat := r.FormValue("format")
-    if outputFormat == "" {
-        outputFormat = "webp" // default format
-    }
+	// Parse parameters
+	quality, format, algorithm := s.parseParameters(r)
 
-    compressedImageBytes, err := s.CompressAndEncodeImage(file, quality, outputFormat)
-    if err != nil {
-        status = "compression_error"
-        http.Error(w, "Error compressing image: "+err.Error(), http.StatusInternalServerError)
-        return
-    }
+	// Create channels for results and errors
+	resultChan := make(chan worker.JobResult, 1)
+	errChan := make(chan error, 1)
+	
+	// Create the job
+	job := compression.NewCompressionJob(
+		header.Filename,
+		bytes.NewReader(fileBytes),
+		format,
+		quality,
+		algorithm,
+		s.processor,
+	)
+	
+	// Submit the job to the worker pool
+	err = s.workerPool.Submit(job, resultChan, errChan)
+	if err != nil {
+		status = "submission_error"
+		http.Error(w, "Error submitting job: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-    w.Header().Set("Content-Type", fmt.Sprintf("image/%s", outputFormat))
-    w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s.%s", filepath.Base(header.Filename), outputFormat))
-    _, err = w.Write(compressedImageBytes)
-    if err != nil {
-        log.Printf("Error writing response: %v", err)
-    }
+	// Wait for result or error
+	select {
+	case result := <-resultChan:
+		// Type assertion
+		compressionResult, ok := result.(*compression.CompressionResult)
+		if !ok {
+			status = "result_error"
+			http.Error(w, "Invalid result type", http.StatusInternalServerError)
+			return
+		}
+		
+		// Record metrics
+		metrics.RecordCompressionRatio(
+			format, 
+			compressionResult.AlgorithmUsed(),
+			compressionResult.OriginalSize(),
+			compressionResult.CompressedSize(),
+		)
+
+		// Set response headers
+		w.Header().Set("Content-Type", fmt.Sprintf("image/%s", format))
+		w.Header().Set("Content-Disposition", fmt.Sprintf(
+			"attachment; filename=%s.%s",
+			filepath.Base(header.Filename),
+			format,
+		))
+		
+		// Send the response
+		_, err = w.Write(compressionResult.Data())
+		if err != nil {
+			log.Printf("Error writing response: %v", err)
+		}
+		
+	case err := <-errChan:
+		status = "compression_error"
+		http.Error(w, "Error compressing image: "+err.Error(), http.StatusInternalServerError)
+		return
+		
+	case <-time.After(30 * time.Second):
+		status = "timeout"
+		http.Error(w, "Processing timeout", http.StatusRequestTimeout)
+		return
+	}
 }
 
+// HandleBatchCompress handles batch image compression requests
 func (s *Service) HandleBatchCompress(w http.ResponseWriter, r *http.Request) {
-    timer := metrics.NewTimer("batch-compress")
-    defer timer.ObserveDuration()
+	timer := metrics.NewTimer("batch-compress")
+	defer timer.ObserveDuration()
 
-    status := "success"
-    defer func() {
-        metrics.GetRequestCounter().WithLabelValues("batch-compress", status).Inc()
-    }()
+	status := "success"
+	defer func() {
+		metrics.GetRequestCounter().WithLabelValues("batch-compress", status).Inc()
+	}()
 
-    if r.Method != http.MethodPost {
-        status = "method_not_allowed"
-        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-        return
-    }
+	if r.Method != http.MethodPost {
+		status = "method_not_allowed"
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 
-    err := r.ParseMultipartForm(32 << 20) // 32 MB max
-    if err != nil {
-        status = "bad_request"
-        http.Error(w, "Unable to parse form: "+err.Error(), http.StatusBadRequest)
-        return
-    }
+	err := r.ParseMultipartForm(32 << 20) // 32 MB max
+	if err != nil {
+		status = "bad_request"
+		http.Error(w, "Unable to parse form: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 
-    files := r.MultipartForm.File["images"]
-    quality, err := strconv.Atoi(r.FormValue("quality"))
-    if err != nil || quality < 1 || quality > 100 {
-        quality = 75 // default quality
-    }
-    outputFormat := r.FormValue("format")
-    if outputFormat == "" {
-        outputFormat = "webp" // default format
-    }
+	files := r.MultipartForm.File["images"]
+	if len(files) == 0 {
+		status = "bad_request"
+		http.Error(w, "No images provided", http.StatusBadRequest)
+		return
+	}
 
-    buf := new(bytes.Buffer)
-    zipWriter := zip.NewWriter(buf)
+	// Parse parameters
+	quality, format, algorithm := s.parseParameters(r)
 
-    for _, fileHeader := range files {
-        file, err := fileHeader.Open()
-        if err != nil {
-            log.Printf("Error opening file %s: %v", fileHeader.Filename, err)
-            continue
-        }
+	// Create a buffer for the zip file
+	buf := new(bytes.Buffer)
+	zipWriter := zip.NewWriter(buf)
 
-        compressedImageBytes, err := s.CompressAndEncodeImage(file, quality, outputFormat)
-        file.Close()
-        if err != nil {
-            log.Printf("Error compressing file %s: %v", fileHeader.Filename, err)
-            continue
-        }
+	// Create channels for results
+	resultChan := make(chan worker.JobResult)
+	errChan := make(chan error)
+	
+	// Channel to track when all jobs are submitted
+	jobsDone := make(chan struct{})
+	
+	// Process each file concurrently
+	go func() {
+		for _, fileHeader := range files {
+			file, err := fileHeader.Open()
+			if err != nil {
+				log.Printf("Error opening file %s: %v", fileHeader.Filename, err)
+				continue
+			}
 
-        zipFile, err := zipWriter.Create(fmt.Sprintf("%s.%s", filepath.Base(fileHeader.Filename), outputFormat))
-        if err != nil {
-            log.Printf("Error creating zip entry for %s: %v", fileHeader.Filename, err)
-            continue
-        }
+			fileBytes, err := io.ReadAll(file)
+			file.Close()
+			if err != nil {
+				log.Printf("Error reading file %s: %v", fileHeader.Filename, err)
+				continue
+			}
 
-        _, err = zipFile.Write(compressedImageBytes)
-        if err != nil {
-            log.Printf("Error writing to zip for %s: %v", fileHeader.Filename, err)
-        }
-    }
+			// Create and submit the job
+			job := compression.NewCompressionJob(
+				fileHeader.Filename,
+				bytes.NewReader(fileBytes),
+				format,
+				quality,
+				algorithm,
+				s.processor,
+			)
+			
+			err = s.workerPool.Submit(job, resultChan, errChan)
+			if err != nil {
+				log.Printf("Error submitting job for %s: %v", fileHeader.Filename, err)
+				continue
+			}
+		}
+		
+		// Signal that all jobs have been submitted
+		close(jobsDone)
+	}()
 
-    zipWriter.Close()
+	// Track results and errors
+	processedCount := 0
+	expectedCount := len(files)
+	
+	// Process until all files are handled or timeout
+	timeout := time.After(60 * time.Second)
+	jobsSubmitted := false
+	
+	timeoutLoop:
+		for processedCount < expectedCount {
+		select {
+		case result := <-resultChan:
+			processedCount++
+			
+			// Type assertion
+			compressionResult, ok := result.(*compression.CompressionResult)
+			if !ok {
+				log.Printf("Invalid result type for job %s", result.ID())
+				continue
+			}
+			
+			// Add to zip
+			zipFile, err := zipWriter.Create(fmt.Sprintf("%s.%s", 
+				filepath.Base(compressionResult.ID()), 
+				format,
+			))
+			if err != nil {
+				log.Printf("Error creating zip entry for %s: %v", compressionResult.ID(), err)
+				continue
+			}
+			
+			_, err = zipFile.Write(compressionResult.Data())
+			if err != nil {
+				log.Printf("Error writing to zip for %s: %v", compressionResult.ID(), err)
+				continue
+			}
+			
+			// Record metrics
+			metrics.RecordCompressionRatio(
+				format,
+				compressionResult.AlgorithmUsed(),
+				compressionResult.OriginalSize(),
+				compressionResult.CompressedSize(),
+			)
+			
+		case err := <-errChan:
+			processedCount++
+			log.Printf("Error processing job: %v", err)
+			
+		case <-jobsDone:
+			jobsSubmitted = true
+			
+		case <-timeout:
+			break timeoutLoop
+		}
+		
+		// If jobs are submitted and we've processed all expected files, break
+		if jobsSubmitted && processedCount >= expectedCount {
+			break
+		}
+	}
 
-    w.Header().Set("Content-Type", "application/zip")
-    w.Header().Set("Content-Disposition", "attachment; filename=compressed_images.zip")
-    _, err = w.Write(buf.Bytes())
-    if err != nil {
-        log.Printf("Error writing zip response: %v", err)
-    }
+	// Close the zip writer
+	err = zipWriter.Close()
+	if err != nil {
+		status = "zip_error"
+		http.Error(w, "Error creating zip file: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Send the response
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", "attachment; filename=compressed_images.zip")
+	_, err = w.Write(buf.Bytes())
+	if err != nil {
+		log.Printf("Error writing zip response: %v", err)
+	}
 }
 
-func (s *Service) CompressAndEncodeImage(file io.Reader, quality int, outputFormat string) ([]byte, error) {
-    img, _, err := image.Decode(file)
-    if err != nil {
-        return nil, fmt.Errorf("error decoding image: %v", err)
-    }
+// parseParameters parses and validates request parameters
+func (s *Service) parseParameters(r *http.Request) (int, string, string) {
+	// Parse quality
+	quality, err := strconv.Atoi(r.FormValue("quality"))
+	if err != nil || quality < 1 || quality > 100 {
+		quality = s.defaultQuality
+	}
 
-    compressedImg := s.CompressImage(img, quality)
+	// Parse format
+	format := r.FormValue("format")
+	if format == "" {
+		format = s.defaultFormat
+	}
 
-    var buf bytes.Buffer
-    switch outputFormat {
-    case "webp":
-        err = webp.Encode(&buf, compressedImg, &webp.Options{Quality: float32(quality)})
-    case "jpeg", "jpg":
-        err = jpeg.Encode(&buf, compressedImg, &jpeg.Options{Quality: quality})
-    case "png":
-        err = png.Encode(&buf, compressedImg)
-    default:
-        return nil, fmt.Errorf("unsupported format: %s", outputFormat)
-    }
+	// Parse algorithm
+	algorithm := r.FormValue("algorithm")
+	if algorithm == "" {
+		algorithm = s.defaultAlgorithm
+	}
 
-    if err != nil {
-        return nil, fmt.Errorf("error encoding image to %s: %v", outputFormat, err)
-    }
-
-    return buf.Bytes(), nil
+	return quality, format, algorithm
 }
 
-func (s *Service) CompressImage(img image.Image, quality int) image.Image {
-    // If quality is 100, return the original image
-    if quality == 100 {
-        return img
-    }
-
-    bounds := img.Bounds()
-    width, height := bounds.Dx(), bounds.Dy()
-    
-    // Calculate new dimensions based on quality
-    scaleFactor := float64(quality) / 100.0
-    newWidth := int(float64(width) * scaleFactor)
-    newHeight := int(float64(height) * scaleFactor)
-
-    // Ensure minimum dimensions
-    if newWidth < 10 {
-        newWidth = 10
-    }
-    if newHeight < 10 {
-        newHeight = 10
-    }
-
-    newImg := image.NewRGBA(image.Rect(0, 0, newWidth, newHeight))
-    draw.ApproxBiLinear.Scale(newImg, newImg.Bounds(), img, img.Bounds(), draw.Over, nil)
-
-    return newImg
+// Shutdown gracefully shuts down the service
+func (s *Service) Shutdown() {
+	if s.workerPool != nil {
+		s.workerPool.Shutdown()
+	}
 }

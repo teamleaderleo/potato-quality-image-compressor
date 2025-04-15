@@ -5,10 +5,12 @@ import (
 	"bytes"
 	"fmt"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"sync"
 	"time"
     "io"
 
@@ -124,70 +126,41 @@ func (s *Service) HandleCompress(w http.ResponseWriter, r *http.Request) {
 	// Parse parameters
 	quality, format, algorithm := s.parseParameters(r)
 
-	// Create channels for results and errors
-	resultChan := make(chan worker.JobResult, 1)
-	errChan := make(chan error, 1)
-	
-	// Create the job
-	job := compression.NewCompressionJob(
+	// Process the image
+	result, err := s.CompressImageDirect(
 		header.Filename,
 		bytes.NewReader(fileBytes),
 		format,
 		quality,
 		algorithm,
-		s.processor,
 	)
-	
-	// Submit the job to the worker pool
-	err = s.workerPool.Submit(job, resultChan, errChan)
+
 	if err != nil {
-		status = "submission_error"
-		http.Error(w, "Error submitting job: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Wait for result or error
-	select {
-	case result := <-resultChan:
-		// Type assertion
-		compressionResult, ok := result.(*compression.CompressionResult)
-		if !ok {
-			status = "result_error"
-			http.Error(w, "Invalid result type", http.StatusInternalServerError)
-			return
-		}
-		
-		// Record metrics
-		metrics.RecordCompressionRatio(
-			format, 
-			compressionResult.AlgorithmUsed(),
-			compressionResult.OriginalSize(),
-			compressionResult.CompressedSize(),
-		)
-
-		// Set response headers
-		w.Header().Set("Content-Type", fmt.Sprintf("image/%s", format))
-		w.Header().Set("Content-Disposition", fmt.Sprintf(
-			"attachment; filename=%s.%s",
-			filepath.Base(header.Filename),
-			format,
-		))
-		
-		// Send the response
-		_, err = w.Write(compressionResult.Data())
-		if err != nil {
-			log.Printf("Error writing response: %v", err)
-		}
-		
-	case err := <-errChan:
 		status = "compression_error"
 		http.Error(w, "Error compressing image: "+err.Error(), http.StatusInternalServerError)
 		return
-		
-	case <-time.After(30 * time.Second):
-		status = "timeout"
-		http.Error(w, "Processing timeout", http.StatusRequestTimeout)
-		return
+	}
+
+	// Record metrics
+	metrics.RecordCompressionRatio(
+		format, 
+		result.AlgorithmUsed,
+		result.OriginalSize,
+		result.CompressedSize,
+	)
+
+	// Set response headers
+	w.Header().Set("Content-Type", fmt.Sprintf("image/%s", format))
+	w.Header().Set("Content-Disposition", fmt.Sprintf(
+		"attachment; filename=%s.%s",
+		filepath.Base(header.Filename),
+		format,
+	))
+	
+	// Send the response
+	_, err = w.Write(result.Data)
+	if err != nil {
+		log.Printf("Error writing response: %v", err)
 	}
 }
 
@@ -228,110 +201,109 @@ func (s *Service) HandleBatchCompress(w http.ResponseWriter, r *http.Request) {
 	buf := new(bytes.Buffer)
 	zipWriter := zip.NewWriter(buf)
 
-	// Create channels for results
-	resultChan := make(chan worker.JobResult)
-	errChan := make(chan error)
-	
-	// Channel to track when all jobs are submitted
-	jobsDone := make(chan struct{})
-	
 	// Process each file concurrently
-	go func() {
-		for _, fileHeader := range files {
-			file, err := fileHeader.Open()
+	resultChan := make(chan struct {
+		filename string
+		result   CompressionResult
+		err      error
+	}, len(files))
+	
+	var wg sync.WaitGroup
+	for _, fileHeader := range files {
+		wg.Add(1)
+		
+		go func(fh *multipart.FileHeader) {
+			defer wg.Done()
+			
+			file, err := fh.Open()
 			if err != nil {
-				log.Printf("Error opening file %s: %v", fileHeader.Filename, err)
-				continue
+				resultChan <- struct {
+					filename string
+					result   CompressionResult
+					err      error
+				}{
+					filename: fh.Filename,
+					err:      err,
+				}
+				return
 			}
+			defer file.Close()
 
 			fileBytes, err := io.ReadAll(file)
-			file.Close()
 			if err != nil {
-				log.Printf("Error reading file %s: %v", fileHeader.Filename, err)
-				continue
+				resultChan <- struct {
+					filename string
+					result   CompressionResult
+					err      error
+				}{
+					filename: fh.Filename,
+					err:      err,
+				}
+				return
 			}
 
-			// Create and submit the job
-			job := compression.NewCompressionJob(
-				fileHeader.Filename,
+			// Process the image
+			result, err := s.CompressImageDirect(
+				fh.Filename,
 				bytes.NewReader(fileBytes),
 				format,
 				quality,
 				algorithm,
-				s.processor,
 			)
 			
-			err = s.workerPool.Submit(job, resultChan, errChan)
-			if err != nil {
-				log.Printf("Error submitting job for %s: %v", fileHeader.Filename, err)
-				continue
+			resultChan <- struct {
+				filename string
+				result   CompressionResult
+				err      error
+			}{
+				filename: fh.Filename,
+				result:   result,
+				err:      err,
 			}
-		}
-		
-		// Signal that all jobs have been submitted
-		close(jobsDone)
+		}(fileHeader)
+	}
+	
+	// Close the channel when all goroutines are done
+	go func() {
+		wg.Wait()
+		close(resultChan)
 	}()
 
-	// Track results and errors
-	processedCount := 0
-	expectedCount := len(files)
-	
-	// Process until all files are handled or timeout
-	timeout := time.After(60 * time.Second)
-	jobsSubmitted := false
-	
-	timeoutLoop:
-		for processedCount < expectedCount {
-		select {
-		case result := <-resultChan:
-			processedCount++
-			
-			// Type assertion
-			compressionResult, ok := result.(*compression.CompressionResult)
-			if !ok {
-				log.Printf("Invalid result type for job %s", result.ID())
-				continue
-			}
-			
-			// Add to zip
-			zipFile, err := zipWriter.Create(fmt.Sprintf("%s.%s", 
-				filepath.Base(compressionResult.ID()), 
-				format,
-			))
-			if err != nil {
-				log.Printf("Error creating zip entry for %s: %v", compressionResult.ID(), err)
-				continue
-			}
-			
-			_, err = zipFile.Write(compressionResult.Data())
-			if err != nil {
-				log.Printf("Error writing to zip for %s: %v", compressionResult.ID(), err)
-				continue
-			}
-			
-			// Record metrics
-			metrics.RecordCompressionRatio(
-				format,
-				compressionResult.AlgorithmUsed(),
-				compressionResult.OriginalSize(),
-				compressionResult.CompressedSize(),
-			)
-			
-		case err := <-errChan:
-			processedCount++
-			log.Printf("Error processing job: %v", err)
-			
-		case <-jobsDone:
-			jobsSubmitted = true
-			
-		case <-timeout:
-			break timeoutLoop
+	// Collect results and add to zip
+	for r := range resultChan {
+		if r.err != nil {
+			log.Printf("Error processing %s: %v", r.filename, r.err)
+			continue
 		}
 		
-		// If jobs are submitted and we've processed all expected files, break
-		if jobsSubmitted && processedCount >= expectedCount {
-			break
+		result := r.result
+		if result.Error != nil {
+			log.Printf("Error compressing %s: %v", r.filename, result.Error)
+			continue
 		}
+
+		zipFile, err := zipWriter.Create(fmt.Sprintf("%s.%s", 
+			filepath.Base(r.filename), 
+			format,
+		))
+		if err != nil {
+			log.Printf("Error creating zip entry: %v", err)
+			continue
+		}
+		
+		_, err = zipFile.Write(result.Data)
+		if err != nil {
+			log.Printf("Error writing to zip: %v", err)
+			continue
+		}
+		
+		// Record metrics
+		metrics.RecordCompressionRatio(
+			format,
+			result.AlgorithmUsed,
+			result.OriginalSize,
+			result.CompressedSize,
+		)
 	}
 
 	// Close the zip writer

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/teamleaderleo/potato-quality-image-compressor/internal/api"
+	"github.com/teamleaderleo/potato-quality-image-compressor/internal/metrics"
 	pb "github.com/teamleaderleo/potato-quality-image-compressor/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
@@ -45,6 +46,14 @@ func RegisterServer(grpcServer *grpc.Server, service *api.Service) {
 
 // CompressImage handles gRPC compression requests by delegating to the service
 func (a *Adapter) CompressImage(ctx context.Context, req *pb.CompressImageRequest) (*pb.CompressImageResponse, error) {
+	timer := metrics.NewTimer("grpc-compress")
+	defer timer.ObserveDuration()
+
+	status := "success"
+	defer func() {
+		metrics.GetRequestCounter().WithLabelValues("grpc-compress", status).Inc()
+	}()
+	
 	// Create an HTTP-like structure to reuse the service implementation
 	imgData := bytes.NewReader(req.ImageData)
 	
@@ -77,6 +86,14 @@ func (a *Adapter) CompressImage(ctx context.Context, req *pb.CompressImageReques
 
 // BatchCompressImages handles multiple image compression requests
 func (a *Adapter) BatchCompressImages(ctx context.Context, req *pb.BatchCompressRequest) (*pb.BatchCompressResponse, error) {
+	timer := metrics.NewTimer("grpc-batch-compress")
+	defer timer.ObserveDuration()
+
+	status := "success"
+	defer func() {
+		metrics.GetRequestCounter().WithLabelValues("grpc-batch-compress", status).Inc()
+	}()
+	
 	startTime := time.Now()
 	
 	if len(req.Requests) == 0 {

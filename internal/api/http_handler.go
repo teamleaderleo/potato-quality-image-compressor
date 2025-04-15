@@ -191,10 +191,3 @@ func (s *Service) parseParameters(r *http.Request) (int, string, string) {
 
 	return quality, format, algorithm
 }
-
-// Shutdown gracefully shuts down the service
-func (s *Service) Shutdown() {
-	if s.workerPool != nil {
-		s.workerPool.Shutdown()
-	}
-}

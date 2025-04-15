@@ -158,3 +158,10 @@ func (s *Service) HandleCompress(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Error writing response: %v", err)
 	}
 }
+
+// Shutdown gracefully shuts down the service
+func (s *Service) Shutdown() {
+	if s.workerPool != nil {
+		s.workerPool.Shutdown()
+	}
+}

@@ -2,16 +2,19 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"fmt"
-	"github.com/teamleaderleo/potato-quality-image-compressor/internal/compression"
-	"github.com/teamleaderleo/potato-quality-image-compressor/internal/metrics"
-	"github.com/teamleaderleo/potato-quality-image-compressor/internal/worker"
 	"io"
 	"log"
 	"net/http"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"time"
+
+	"github.com/teamleaderleo/potato-quality-image-compressor/internal/compression"
+	"github.com/teamleaderleo/potato-quality-image-compressor/internal/metrics"
+	"github.com/teamleaderleo/potato-quality-image-compressor/internal/worker"
 )
 
 // Service handles the API endpoints for image compression
@@ -65,16 +68,7 @@ func NewServiceWithConfig(config ServiceConfig) *Service {
 
 	// Start a goroutine to periodically update memory usage metrics
 	if config.EnableMetrics {
-		go func() {
-			ticker := time.NewTicker(10 * time.Second)
-			defer ticker.Stop()
-
-			var m runtime.MemStats
-			for range ticker.C {
-				runtime.ReadMemStats(&m)
-				metrics.UpdateMemoryUsage(m.Alloc)
-			}
-		}()
+		go monitorMemoryUsage()
 	}
 
 	return &Service{
@@ -86,8 +80,24 @@ func NewServiceWithConfig(config ServiceConfig) *Service {
 	}
 }
 
+// monitorMemoryUsage periodically updates memory usage metrics
+func monitorMemoryUsage() {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	var m runtime.MemStats
+	for range ticker.C {
+		runtime.ReadMemStats(&m)
+		metrics.UpdateMemoryUsage(m.Alloc)
+	}
+}
+
 // HandleCompress handles single image compression requests
 func (s *Service) HandleCompress(w http.ResponseWriter, r *http.Request) {
+	// Create a context with a timeout
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+	
 	timer := metrics.NewTimer("compress")
 	defer timer.ObserveDuration()
 
@@ -123,6 +133,7 @@ func (s *Service) HandleCompress(w http.ResponseWriter, r *http.Request) {
 
 	// Process the image
 	result, err := s.CompressImageDirect(
+		ctx,
 		header.Filename,
 		bytes.NewReader(fileBytes),
 		format,
@@ -157,6 +168,81 @@ func (s *Service) HandleCompress(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("Error writing response: %v", err)
 	}
+}
+
+// parseParameters parses and validates request parameters
+func (s *Service) parseParameters(r *http.Request) (int, string, string) {
+	// Parse quality
+	quality, err := validateQuality(r.FormValue("quality"), s.defaultQuality)
+	if err != nil {
+		quality = s.defaultQuality
+	}
+
+	// Parse format
+	format := validateFormat(r.FormValue("format"), s.defaultFormat)
+
+	// Parse algorithm
+	algorithm := validateAlgorithm(r.FormValue("algorithm"), s.defaultAlgorithm)
+
+	return quality, format, algorithm
+}
+
+// validateQuality validates the quality parameter
+func validateQuality(qualityStr string, defaultQuality int) (int, error) {
+	if qualityStr == "" {
+		return defaultQuality, nil
+	}
+	
+	quality, err := strconv.Atoi(qualityStr)
+	if err != nil {
+		return defaultQuality, err
+	}
+	
+	if quality < 1 || quality > 100 {
+		return defaultQuality, fmt.Errorf("quality must be between 1 and 100")
+	}
+	
+	return quality, nil
+}
+
+// validateFormat validates the format parameter
+func validateFormat(format, defaultFormat string) string {
+	if format == "" {
+		return defaultFormat
+	}
+	
+	// Add validation logic for supported formats if needed
+	validFormats := map[string]bool{
+		"webp": true,
+		"jpeg": true,
+		"jpg":  true,
+		"png":  true,
+	}
+	
+	if !validFormats[format] {
+		return defaultFormat
+	}
+	
+	return format
+}
+
+// validateAlgorithm validates the algorithm parameter
+func validateAlgorithm(algorithm, defaultAlgorithm string) string {
+	if algorithm == "" {
+		return defaultAlgorithm
+	}
+	
+	// Add validation logic for supported algorithms if needed
+	validAlgorithms := map[string]bool{
+		"scale":      true,
+		"qualitymod": true,
+	}
+	
+	if !validAlgorithms[algorithm] {
+		return defaultAlgorithm
+	}
+	
+	return algorithm
 }
 
 // Shutdown gracefully shuts down the service

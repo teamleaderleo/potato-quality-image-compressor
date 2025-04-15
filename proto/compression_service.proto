@@ -1,0 +1,109 @@
+syntax = "proto3";
+
+package compression;
+
+option go_package = "github.com/teamleaderleo/potato-quality-image-compressor/proto";
+
+service ImageCompressionService {
+  // Compress a single image
+  rpc CompressImage (CompressImageRequest) returns (CompressImageResponse);
+  
+  // Compress multiple images in a batch
+  rpc BatchCompressImages (BatchCompressRequest) returns (BatchCompressResponse);
+  
+  // Stream compressed images back to the client
+  rpc StreamCompressImages (stream CompressImageRequest) returns (stream CompressImageResponse);
+  
+  // Get service stats
+  rpc GetServiceStats (ServiceStatsRequest) returns (ServiceStatsResponse);
+}
+
+// CompressImageRequest contains the data and parameters for image compression
+message CompressImageRequest {
+  // The image data to be compressed
+  bytes image_data = 1;
+  
+  // The requested quality level (1-100)
+  int32 quality = 2;
+  
+  // The requested output format
+  string format = 3;
+  
+  // The requested compression strategy
+  string strategy = 4;
+  
+  // Optional original filename
+  string filename = 5;
+}
+
+// CompressImageResponse contains the compressed image and metadata
+message CompressImageResponse {
+  // The compressed image data
+  bytes image_data = 1;
+  
+  // The format of the compressed image
+  string format = 2;
+  
+  // The size of the original image in bytes
+  int64 original_size = 3;
+  
+  // The size of the compressed image in bytes
+  int64 compressed_size = 4;
+  
+  // The compression ratio (compressed_size / original_size)
+  double compression_ratio = 5;
+  
+  // Time taken to compress the image in milliseconds
+  int64 processing_time_ms = 6;
+  
+  // Error message (if any)
+  string error = 7;
+  
+  // The filename (if provided in the request)
+  string filename = 8;
+}
+
+// BatchCompressRequest contains multiple images to compress
+message BatchCompressRequest {
+  // List of compression requests
+  repeated CompressImageRequest requests = 1;
+}
+
+// BatchCompressResponse contains multiple compressed images
+message BatchCompressResponse {
+  // List of compression responses
+  repeated CompressImageResponse responses = 1;
+  
+  // Total time taken to process the batch in milliseconds
+  int64 total_processing_time_ms = 2;
+}
+
+// ServiceStatsRequest is used to request service statistics
+message ServiceStatsRequest {
+  // Optional time period in seconds (0 = all time)
+  int64 time_period_seconds = 1;
+}
+
+// ServiceStatsResponse contains service statistics
+message ServiceStatsResponse {
+  // Total number of requests processed
+  int64 total_requests = 1;
+  
+  // Total number of images processed
+  int64 total_images = 2;
+  
+  // Average processing time in milliseconds
+  double avg_processing_time_ms = 3;
+  
+  // Average compression ratio
+  double avg_compression_ratio = 4;
+  
+  // Number of worker threads
+  int32 worker_count = 5;
+  
+  // Number of busy workers
+  int32 busy_workers = 6;
+  
+  // Current memory usage in bytes
+  int64 memory_usage_bytes = 7;
+}

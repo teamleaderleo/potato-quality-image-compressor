@@ -1,6 +1,8 @@
 module github.com/teamleaderleo/potato-quality-image-compressor
 
-go 1.22.5
+go 1.23
+
+toolchain go1.23.8
 
 require golang.org/x/image v0.18.0
 
@@ -8,19 +10,27 @@ require (
 	github.com/aws/aws-lambda-go v1.47.0
 	github.com/chai2010/webp v1.1.1
 	github.com/prometheus/client_golang v1.22.0
+	github.com/shirou/gopsutil/v4 v4.25.3
+	google.golang.org/grpc v1.71.1
+	google.golang.org/protobuf v1.36.5
 )
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/ebitengine/purego v0.8.2 // indirect
+	github.com/go-ole/go-ole v1.2.6 // indirect
+	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
+	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
 	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/prometheus/common v0.62.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
+	github.com/tklauser/go-sysconf v0.3.12 // indirect
+	github.com/tklauser/numcpus v0.6.1 // indirect
+	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	golang.org/x/net v0.34.0 // indirect
 	golang.org/x/sys v0.30.0 // indirect
 	golang.org/x/text v0.21.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250115164207-1a7da9e5054f // indirect
-	google.golang.org/grpc v1.71.1 // indirect
-	google.golang.org/protobuf v1.36.5 // indirect
 )

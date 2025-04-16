@@ -29,11 +29,13 @@ type ServerConfig struct {
 
 // CompressionConfig represents image compression configuration
 type CompressionConfig struct {
-	DefaultQuality   int
-	DefaultFormat    string
-	DefaultAlgorithm string
-	MaxUploadSize    int64
-	MaxBatchSize     int
+	DefaultQuality         int
+	DefaultFormat          string
+	DefaultAlgorithm       string
+	MaxUploadSize          int64
+	MaxBatchSize           int
+	ImageProcessingTimeout time.Duration
+	BatchProcessingTimeout time.Duration
 }
 
 // WorkerConfig represents worker pool configuration
@@ -50,6 +52,36 @@ type MetricsConfig struct {
 	PrometheusEnabled  bool
 }
 
+// ServiceConfig contains configuration for the compression service
+type ServiceConfig struct {
+	WorkerCount            int
+	JobQueueSize           int
+	DefaultQuality         int
+	DefaultFormat          string
+	DefaultAlgorithm       string
+	EnableMetrics          bool
+	ImageProcessingTimeout time.Duration
+	BatchProcessingTimeout time.Duration
+	MaxUploadSize          int64
+	MaxBatchSize           int
+}
+
+// CreateServiceConfig creates a ServiceConfig from AppConfig
+func (c AppConfig) CreateServiceConfig() ServiceConfig {
+	return ServiceConfig{
+		WorkerCount:            c.Worker.WorkerCount,
+		JobQueueSize:           c.Worker.JobQueueSize,
+		DefaultQuality:         c.Compression.DefaultQuality,
+		DefaultFormat:          c.Compression.DefaultFormat,
+		DefaultAlgorithm:       c.Compression.DefaultAlgorithm,
+		EnableMetrics:          c.Metrics.Enabled,
+		ImageProcessingTimeout: c.Compression.ImageProcessingTimeout,
+		BatchProcessingTimeout: c.Compression.BatchProcessingTimeout,
+		MaxUploadSize:          c.Compression.MaxUploadSize,
+		MaxBatchSize:           c.Compression.MaxBatchSize,
+	}
+}
+
 // LoadConfig loads the application configuration from environment variables
 func LoadConfig() AppConfig {
 	return AppConfig{
@@ -60,11 +92,13 @@ func LoadConfig() AppConfig {
 			IdleTimeout:  getDurationWithDefault("IDLE_TIMEOUT", 120*time.Second),
 		},
 		Compression: CompressionConfig{
-			DefaultQuality:   getIntWithDefault("DEFAULT_QUALITY", 75),
-			DefaultFormat:    getEnvWithDefault("DEFAULT_FORMAT", "webp"),
-			DefaultAlgorithm: getEnvWithDefault("DEFAULT_ALGORITHM", "scale"),
-			MaxUploadSize:    getInt64WithDefault("MAX_UPLOAD_SIZE", 32<<20), // 32 MB
-			MaxBatchSize:     getIntWithDefault("MAX_BATCH_SIZE", 50),
+			DefaultQuality:         getIntWithDefault("DEFAULT_QUALITY", 75),
+			DefaultFormat:          getEnvWithDefault("DEFAULT_FORMAT", "webp"),
+			DefaultAlgorithm:       getEnvWithDefault("DEFAULT_ALGORITHM", "scale"),
+			MaxUploadSize:          getInt64WithDefault("MAX_UPLOAD_SIZE", 32<<20), // 32 MB
+			MaxBatchSize:           getIntWithDefault("MAX_BATCH_SIZE", 50),
+			ImageProcessingTimeout: getDurationWithDefault("IMAGE_PROCESSING_TIMEOUT", 30*time.Second),
+			BatchProcessingTimeout: getDurationWithDefault("BATCH_PROCESSING_TIMEOUT", 5*time.Minute),
 		},
 		Worker: WorkerConfig{
 			WorkerCount:  getIntWithDefault("WORKER_COUNT", runtime.NumCPU()),

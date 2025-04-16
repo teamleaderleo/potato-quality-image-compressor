@@ -7,12 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"runtime"
 	"strconv"
 	"time"
 
 	"github.com/teamleaderleo/potato-quality-image-compressor/internal/compression"
-	"github.com/teamleaderleo/potato-quality-image-compressor/internal/metrics"
+	"github.com/teamleaderleo/potato-quality-image-compressor/internal/config"
 	"github.com/teamleaderleo/potato-quality-image-compressor/internal/worker"
 )
 
@@ -48,22 +47,8 @@ type Service struct {
 	maxBatchSize           int
 }
 
-// ServiceConfig contains configuration for the Service
-type ServiceConfig struct {
-	WorkerCount            int
-	JobQueueSize           int
-	DefaultQuality         int
-	DefaultFormat          string
-	DefaultAlgorithm       string
-	EnableMetrics          bool
-	ImageProcessingTimeout time.Duration
-	BatchProcessingTimeout time.Duration
-	MaxUploadSize          int64
-	MaxBatchSize           int
-}
-
 // NewServiceWithConfig creates a new service with the given configuration
-func NewServiceWithConfig(config ServiceConfig) *Service {
+func NewServiceWithConfig(config config.ServiceConfig) *Service {
 	// Create worker pool
 	workerPool := worker.NewPool(config.WorkerCount, config.JobQueueSize, config.EnableMetrics)
 
@@ -75,9 +60,9 @@ func NewServiceWithConfig(config ServiceConfig) *Service {
 		processor.SetDefaultAlgorithm(config.DefaultAlgorithm)
 	}
 
-	// Start a goroutine to periodically update memory usage metrics
+	// Start resource monitoring if metrics are enabled
 	if config.EnableMetrics {
-		go monitorMemoryUsage()
+		StartResourceMonitor(10 * time.Second)
 	}
 
 	return &Service{
@@ -93,17 +78,7 @@ func NewServiceWithConfig(config ServiceConfig) *Service {
 	}
 }
 
-// monitorMemoryUsage periodically updates memory usage metrics
-func monitorMemoryUsage() {
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
 
-	var m runtime.MemStats
-	for range ticker.C {
-		runtime.ReadMemStats(&m)
-		metrics.UpdateMemoryUsage(m.Alloc)
-	}
-}
 
 // CompressImage processes an image directly and returns the result
 // Core implementation used by both HTTP and gRPC handlers

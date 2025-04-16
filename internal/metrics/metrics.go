@@ -50,16 +50,62 @@ var (
 		},
 	)
 
+	// Process metrics
 	memoryUsage = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Name: "image_compression_memory_bytes",
-			Help: "Current memory usage of the image compression service",
+			Help: "Current memory usage of the image compression service process",
+		},
+	)
+
+	cpuUsage = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "image_compression_cpu_percent",
+			Help: "Current CPU usage percentage of the image compression service process",
+		},
+	)
+
+	// System metrics
+	systemMemoryUsage = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "system_memory_bytes_used",
+			Help: "Current system memory usage in bytes",
+		},
+	)
+
+	systemMemoryPercent = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "system_memory_percent_used",
+			Help: "Current system memory usage percentage",
+		},
+	)
+
+	systemCPUUsage = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "system_cpu_percent",
+			Help: "Current system CPU usage percentage",
+		},
+	)
+
+	// Throughput metrics
+	throughputImages = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "image_compression_images_processed_total",
+			Help: "Total number of images processed",
+		},
+	)
+
+	throughputBytes = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "image_compression_bytes_processed_total",
+			Help: "Total number of bytes processed",
 		},
 	)
 )
 
 // Init registers all metrics and sets up the HTTP handler
 func Init() error {
+	// Request metrics
 	if err := prometheus.Register(requestCounter); err != nil {
 		return fmt.Errorf("failed to register request counter: %w", err)
 	}
@@ -69,19 +115,97 @@ func Init() error {
 	if err := prometheus.Register(jobDuration); err != nil {
 		return fmt.Errorf("failed to register job duration: %w", err)
 	}
+	
+	// Performance metrics
 	if err := prometheus.Register(compressionRatio); err != nil {
 		return fmt.Errorf("failed to register compression ratio: %w", err)
 	}
 	if err := prometheus.Register(workerGauge); err != nil {
 		return fmt.Errorf("failed to register worker gauge: %w", err)
 	}
+	
+	// Process resource metrics
 	if err := prometheus.Register(memoryUsage); err != nil {
 		return fmt.Errorf("failed to register memory usage: %w", err)
+	}
+	if err := prometheus.Register(cpuUsage); err != nil {
+		return fmt.Errorf("failed to register CPU usage: %w", err)
+	}
+	
+	// System resource metrics
+	if err := prometheus.Register(systemMemoryUsage); err != nil {
+		return fmt.Errorf("failed to register system memory usage: %w", err)
+	}
+	if err := prometheus.Register(systemMemoryPercent); err != nil {
+		return fmt.Errorf("failed to register system memory percentage: %w", err)
+	}
+	if err := prometheus.Register(systemCPUUsage); err != nil {
+		return fmt.Errorf("failed to register system CPU usage: %w", err)
+	}
+	
+	// Throughput metrics
+	if err := prometheus.Register(throughputImages); err != nil {
+		return fmt.Errorf("failed to register image throughput: %w", err)
+	}
+	if err := prometheus.Register(throughputBytes); err != nil {
+		return fmt.Errorf("failed to register byte throughput: %w", err)
 	}
 
 	http.Handle("/metrics", promhttp.Handler())
 	return nil
 }
+
+// Timer functions
+
+// NewTimer creates a new timer for measuring request duration
+func NewTimer(endpoint string) *prometheus.Timer {
+	return prometheus.NewTimer(requestDuration.WithLabelValues(endpoint))
+}
+
+// Process metrics update functions
+
+// UpdateMemoryUsage updates the process memory usage metric
+func UpdateMemoryUsage(bytesUsed uint64) {
+	memoryUsage.Set(float64(bytesUsed))
+}
+
+// UpdateCPUUsage updates the process CPU usage metric
+func UpdateCPUUsage(percentUsed float64) {
+	cpuUsage.Set(percentUsed)
+}
+
+// System metrics update functions
+
+// UpdateSystemMemoryUsage updates the system memory usage metric
+func UpdateSystemMemoryUsage(bytesUsed uint64) {
+	systemMemoryUsage.Set(float64(bytesUsed))
+}
+
+// UpdateSystemMemoryPercent updates the system memory percentage metric
+func UpdateSystemMemoryPercent(percentUsed float64) {
+	systemMemoryPercent.Set(percentUsed)
+}
+
+// UpdateSystemCPUUsage updates the system CPU usage metric
+func UpdateSystemCPUUsage(percentUsed float64) {
+	systemCPUUsage.Set(percentUsed)
+}
+
+// Performance metrics
+
+// RecordCompressionRatio records the compression ratio metric
+func RecordCompressionRatio(format, algorithm string, originalSize, compressedSize int) {
+	if originalSize > 0 {
+		ratio := float64(compressedSize) / float64(originalSize)
+		compressionRatio.WithLabelValues(format, algorithm).Observe(ratio)
+		
+		// Update throughput metrics
+		throughputImages.Inc()
+		throughputBytes.Add(float64(originalSize))
+	}
+}
+
+// Getter functions
 
 // GetRequestCounter returns the request counter metric
 func GetRequestCounter() *prometheus.CounterVec {
@@ -113,20 +237,7 @@ func GetMemoryUsage() *prometheus.Gauge {
 	return &memoryUsage
 }
 
-// NewTimer creates a new timer for measuring request duration
-func NewTimer(endpoint string) *prometheus.Timer {
-	return prometheus.NewTimer(requestDuration.WithLabelValues(endpoint))
-}
-
-// RecordCompressionRatio records the compression ratio metric
-func RecordCompressionRatio(format, algorithm string, originalSize, compressedSize int) {
-	if originalSize > 0 {
-		ratio := float64(compressedSize) / float64(originalSize)
-		compressionRatio.WithLabelValues(format, algorithm).Observe(ratio)
-	}
-}
-
-// UpdateMemoryUsage updates the memory usage metric (called periodically)
-func UpdateMemoryUsage(bytesUsed uint64) {
-	memoryUsage.Set(float64(bytesUsed))
+// GetCPUUsage returns the CPU usage metric
+func GetCPUUsage() *prometheus.Gauge {
+	return &cpuUsage
 }

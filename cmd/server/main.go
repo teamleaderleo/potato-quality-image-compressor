@@ -46,14 +46,7 @@ func main() {
 	}
 
 	// Create service with configuration
-	serviceConfig := api.ServiceConfig{
-		WorkerCount:      cfg.Worker.WorkerCount,
-		JobQueueSize:     cfg.Worker.JobQueueSize,
-		DefaultQuality:   cfg.Compression.DefaultQuality,
-		DefaultFormat:    cfg.Compression.DefaultFormat,
-		DefaultAlgorithm: cfg.Compression.DefaultAlgorithm,
-		EnableMetrics:    cfg.Metrics.Enabled,
-	}
+	serviceConfig := cfg.CreateServiceConfig()
 	service := api.NewServiceWithConfig(serviceConfig)
 	defer service.Shutdown()
 

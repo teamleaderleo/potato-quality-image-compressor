@@ -4,17 +4,26 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/teamleaderleo/potato-quality-image-compressor/internal/api"
+	"github.com/teamleaderleo/potato-quality-image-compressor/internal/config"
+	"github.com/teamleaderleo/potato-quality-image-compressor/internal/grpc"
 	"github.com/teamleaderleo/potato-quality-image-compressor/internal/metrics"
+	"google.golang.org/grpc/reflection"
+	grpcServer "google.golang.org/grpc"
 )
 
 func main() {
+	// Load configuration
+	cfg := config.LoadConfig()
+
 	// Initialize context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -29,74 +38,150 @@ func main() {
 		cancel()
 	}()
 
-	// Initialize metrics
-	if err := metrics.Init(); err != nil {
-		log.Fatalf("Failed to initialize metrics: %v", err)
+	// Initialize metrics if enabled
+	if cfg.Metrics.Enabled {
+		if err := metrics.Init(); err != nil {
+			log.Fatalf("Failed to initialize metrics: %v", err)
+		}
 	}
 
-	// Create service with default configuration
-	service := api.NewService()
+	// Create service with configuration
+	serviceConfig := api.ServiceConfig{
+		WorkerCount:      cfg.Worker.WorkerCount,
+		JobQueueSize:     cfg.Worker.JobQueueSize,
+		DefaultQuality:   cfg.Compression.DefaultQuality,
+		DefaultFormat:    cfg.Compression.DefaultFormat,
+		DefaultAlgorithm: cfg.Compression.DefaultAlgorithm,
+		EnableMetrics:    cfg.Metrics.Enabled,
+	}
+	service := api.NewServiceWithConfig(serviceConfig)
 	defer service.Shutdown()
-
-	// Set up HTTP server and routes
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", handleRoot)
-	mux.HandleFunc("/compress", service.HandleCompress)
-	mux.HandleFunc("/batch-compress", service.HandleBatchCompress)
 
 	// Determine running mode
 	if os.Getenv("AWS_LAMBDA_FUNCTION_NAME") != "" {
 		// Lambda mode
 		api.StartLambda()
-	} else {
-		// Server mode
-		port := getEnvWithDefault("PORT", "8080")
-		server := createServer(port, mux)
-		
-		// Start server in a goroutine
-		go startServer(server)
-
-		// Wait for context cancellation (shutdown signal)
-		<-ctx.Done()
-		
-		// Graceful shutdown with 30s timeout
-		log.Println("Shutting down server...")
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer shutdownCancel()
-		
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			log.Printf("Server shutdown error: %v", err)
-		}
-		
-		log.Println("Server gracefully stopped")
+		return
 	}
+
+	// Track if any server is started
+	serversStarted := false
+	
+	// Setup and start HTTP server if enabled
+	var httpServer *http.Server
+	if cfg.HttpEnabled {
+		httpServer = setupHTTPServer(service, cfg)
+		go startHTTPServer(httpServer)
+		serversStarted = true
+	}
+
+	// Setup and start gRPC server if enabled
+	var grpcSrv *grpcServer.Server
+	if cfg.GrpcEnabled {
+		grpcSrv = setupGRPCServer(service, cfg)
+		go startGRPCServer(grpcSrv, cfg.GrpcPort)
+		serversStarted = true
+	}
+	
+	// If no servers were started, log a warning
+	if !serversStarted {
+		log.Println("Warning: No servers were started. Application will only process background tasks.")
+	}
+
+	// Wait for context cancellation (shutdown signal)
+	<-ctx.Done()
+	
+	// Graceful shutdown
+	log.Println("Shutting down...")
+	
+	// Shutdown HTTP server if it was started
+	if cfg.HttpEnabled && httpServer != nil {
+		shutdownHTTPServer(httpServer, cfg.ShutdownDelay)
+	}
+	
+	// Shutdown gRPC server if it was started
+	if cfg.GrpcEnabled && grpcSrv != nil {
+		shutdownGRPCServer(grpcSrv)
+	}
+	
+	log.Println("Shutdown completed")
 }
 
-// createServer creates an HTTP server with configured timeouts
-func createServer(port string, handler http.Handler) *http.Server {
+// setupHTTPServer creates and configures the HTTP server
+func setupHTTPServer(service *api.Service, cfg config.AppConfig) *http.Server {
+	// Set up HTTP server and routes
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", handleRoot)
+	mux.HandleFunc("/compress", service.HandleCompress)
+	mux.HandleFunc("/batch-compress", service.HandleBatchCompress)
+	
+	// Add Prometheus metrics endpoint if enabled
+	if cfg.Metrics.PrometheusEnabled {
+		mux.Handle(cfg.Metrics.MetricsEndpoint, promhttp.Handler())
+	}
+
+	// Create server with configured timeouts
 	return &http.Server{
-		Addr:         ":" + port,
-		Handler:      handler,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 60 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		Addr:         ":" + cfg.Server.Port,
+		Handler:      mux,
+		ReadTimeout:  cfg.Server.ReadTimeout,
+		WriteTimeout: cfg.Server.WriteTimeout,
+		IdleTimeout:  cfg.Server.IdleTimeout,
 	}
 }
 
-// startServer starts the HTTP server and logs any error
-func startServer(server *http.Server) {
-	log.Printf("Server starting on http://localhost%s", server.Addr)
+// startHTTPServer starts the HTTP server and logs any error
+func startHTTPServer(server *http.Server) {
+	log.Printf("HTTP server starting on http://localhost%s", server.Addr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("Server failed to start: %v", err)
+		log.Printf("HTTP server failed to start: %v", err)
 	}
 }
 
-// getEnvWithDefault returns an environment variable or the default value if not set
-func getEnvWithDefault(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
+// setupGRPCServer creates and configures the gRPC server
+func setupGRPCServer(service *api.Service, cfg config.AppConfig) *grpcServer.Server {
+	// Create new gRPC server
+	grpcSrv := grpcServer.NewServer()
+	
+	// Register services
+	grpc.RegisterServer(grpcSrv, service)
+	
+	// Enable reflection for debugging
+	reflection.Register(grpcSrv)
+	
+	return grpcSrv
+}
+
+// startGRPCServer starts the gRPC server
+func startGRPCServer(server *grpcServer.Server, port string) {
+	listener, err := net.Listen("tcp", ":"+port)
+	if err != nil {
+		log.Fatalf("Failed to listen on port %s: %v", port, err)
 	}
-	return defaultValue
+	
+	log.Printf("gRPC server starting on port %s", port)
+	if err := server.Serve(listener); err != nil {
+		log.Printf("gRPC server error: %v", err)
+	}
+}
+
+// shutdownHTTPServer gracefully shuts down the HTTP server
+func shutdownHTTPServer(server *http.Server, timeout time.Duration) {
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), timeout)
+	defer shutdownCancel()
+	
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Printf("HTTP server shutdown error: %v", err)
+	} else {
+		log.Println("HTTP server gracefully stopped")
+	}
+}
+
+// shutdownGRPCServer gracefully shuts down the gRPC server
+func shutdownGRPCServer(server *grpcServer.Server) {
+	log.Println("Stopping gRPC server...")
+	server.GracefulStop()
+	log.Println("gRPC server gracefully stopped")
 }
 
 // handleRoot handles the root endpoint

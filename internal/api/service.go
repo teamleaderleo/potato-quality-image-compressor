@@ -132,7 +132,7 @@ func (s *Service) HandleCompress(w http.ResponseWriter, r *http.Request) {
 	quality, format, algorithm := s.parseParameters(r)
 
 	// Process the image
-	result, err := s.CompressImageDirect(
+	result, err := s.CompressImage(
 		ctx,
 		header.Filename,
 		bytes.NewReader(fileBytes),
@@ -192,16 +192,16 @@ func validateQuality(qualityStr string, defaultQuality int) (int, error) {
 	if qualityStr == "" {
 		return defaultQuality, nil
 	}
-	
+
 	quality, err := strconv.Atoi(qualityStr)
 	if err != nil {
 		return defaultQuality, err
 	}
-	
+
 	if quality < 1 || quality > 100 {
 		return defaultQuality, fmt.Errorf("quality must be between 1 and 100")
 	}
-	
+
 	return quality, nil
 }
 
@@ -210,7 +210,7 @@ func validateFormat(format, defaultFormat string) string {
 	if format == "" {
 		return defaultFormat
 	}
-	
+
 	// Add validation logic for supported formats if needed
 	validFormats := map[string]bool{
 		"webp": true,

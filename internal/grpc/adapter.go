@@ -58,7 +58,8 @@ func (a *Adapter) CompressImage(ctx context.Context, req *pb.CompressImageReques
 	imgData := bytes.NewReader(req.ImageData)
 	
 	// Process the image using our existing service logic
-	result, err := a.service.CompressImageDirect(
+	result, err := a.service.CompressImage(
+		ctx,
 		req.Filename,
 		imgData,
 		string(req.Format),

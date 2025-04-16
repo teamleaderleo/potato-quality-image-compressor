@@ -54,23 +54,6 @@ type ServiceConfig struct {
 	EnableMetrics    bool
 }
 
-// DefaultServiceConfig returns the default service configuration
-func DefaultServiceConfig() ServiceConfig {
-	return ServiceConfig{
-		WorkerCount:      runtime.NumCPU(),
-		JobQueueSize:     runtime.NumCPU() * 4,
-		DefaultQuality:   75,
-		DefaultFormat:    "webp",
-		DefaultAlgorithm: "scale",
-		EnableMetrics:    true,
-	}
-}
-
-// NewService creates a new service with default configuration
-func NewService() *Service {
-	return NewServiceWithConfig(DefaultServiceConfig())
-}
-
 // NewServiceWithConfig creates a new service with the given configuration
 func NewServiceWithConfig(config ServiceConfig) *Service {
 	// Create worker pool

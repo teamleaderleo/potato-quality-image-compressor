@@ -1,39 +1,55 @@
 package api
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
-	"bytes"
 	"time"
 	
 	"github.com/teamleaderleo/potato-quality-image-compressor/internal/compression"
 	"github.com/teamleaderleo/potato-quality-image-compressor/internal/worker"
 )
 
+// Common errors
+var (
+	ErrInvalidResultType = errors.New("invalid result type")
+	ErrProcessingTimeout = errors.New("processing timeout")
+)
+
 // CompressionResult represents the result of a compression operation
 type CompressionResult struct {
-	Data            []byte
-	Error           error
-	ProcessingTime  time.Duration
-	OriginalSize    int
-	CompressedSize  int
+	Data             []byte
+	Error            error
+	ProcessingTime   time.Duration
+	OriginalSize     int
+	CompressedSize   int
 	CompressionRatio float64
-	AlgorithmUsed   string
+	AlgorithmUsed    string
 }
 
-// CompressImageDirect processes an image directly and returns the result
+// CompressImage processes an image directly and returns the result
 // Used by the gRPC adapter for synchronous processing
-func (s *Service) CompressImageDirect(
+func (s *Service) CompressImage(
+	ctx context.Context,
 	filename string,
 	input io.Reader,
 	format string,
 	quality int,
 	algorithm string,
 ) (CompressionResult, error) {
+	// Create a new context with a timeout if not already set
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+	}
+
 	// Read the input data
 	inputData, err := io.ReadAll(input)
 	if err != nil {
-		return CompressionResult{Error: err}, err
+		return CompressionResult{Error: fmt.Errorf("reading input: %w", err)}, err
 	}
 	
 	// Create a job
@@ -54,38 +70,35 @@ func (s *Service) CompressImageDirect(
 	startTime := time.Now()
 	
 	// Submit job to worker pool
-	err = s.workerPool.Submit(job, resultChan, errChan)
-	if err != nil {
-		return CompressionResult{Error: err}, err
+	if err := s.workerPool.Submit(job, resultChan, errChan); err != nil {
+		return CompressionResult{Error: fmt.Errorf("submitting job: %w", err)}, err
 	}
-	
-	// Wait for result or error
+
+	// Wait for result, error, or context cancellation
 	select {
 	case result := <-resultChan:
 		// Type assertion
 		compressionResult, ok := result.(*compression.CompressionResult)
 		if !ok {
-			err := fmt.Errorf("invalid result type")
-			return CompressionResult{Error: err}, err
+			return CompressionResult{Error: ErrInvalidResultType}, ErrInvalidResultType
 		}
 		
 		// Return the result
 		return CompressionResult{
-			Data:            compressionResult.Data(),
-			Error:           nil,
-			ProcessingTime:  time.Since(startTime),
-			OriginalSize:    compressionResult.OriginalSize(),
-			CompressedSize:  compressionResult.CompressedSize(),
+			Data:             compressionResult.Data(),
+			Error:            nil,
+			ProcessingTime:   time.Since(startTime),
+			OriginalSize:     compressionResult.OriginalSize(),
+			CompressedSize:   compressionResult.CompressedSize(),
 			CompressionRatio: compressionResult.CompressionRatio(),
-			AlgorithmUsed:   compressionResult.AlgorithmUsed(),
+			AlgorithmUsed:    compressionResult.AlgorithmUsed(),
 		}, nil
 		
 	case err := <-errChan:
-		return CompressionResult{Error: err}, err
-		
-	case <-time.After(30 * time.Second):
-		err := fmt.Errorf("processing timeout")
-		return CompressionResult{Error: err}, err
+		return CompressionResult{Error: fmt.Errorf("processing job: %w", err)}, err
+
+	case <-ctx.Done():
+		return CompressionResult{Error: ctx.Err()}, ctx.Err()
 	}
 }
 
@@ -97,4 +110,10 @@ func (s *Service) GetWorkerCount() int {
 // GetBusyWorkerCount returns the number of busy workers
 func (s *Service) GetBusyWorkerCount() int {
 	return s.workerPool.BusyWorkerCount()
+}
+
+// GetServiceHealth returns the health status of the service
+func (s *Service) GetServiceHealth() bool {
+	// Check if worker pool is operational
+	return s.workerPool != nil
 }

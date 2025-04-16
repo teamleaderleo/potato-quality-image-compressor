@@ -33,25 +33,35 @@ type CompressionResult struct {
 	CompressedSize   int
 	CompressionRatio float64
 	AlgorithmUsed    string
+	Filename         string  // Added to store the original filename
+	Format           string  // Added to store the output format
 }
 
 // Service handles the API endpoints for image compression
 type Service struct {
-	workerPool       *worker.Pool
-	processor        *compression.ImageProcessor
-	defaultQuality   int
-	defaultFormat    string
-	defaultAlgorithm string
+	workerPool             *worker.Pool
+	processor              *compression.ImageProcessor
+	defaultQuality         int
+	defaultFormat          string
+	defaultAlgorithm       string
+	imageProcessingTimeout time.Duration
+	batchProcessingTimeout time.Duration
+	maxUploadSize          int64
+	maxBatchSize           int
 }
 
 // ServiceConfig contains configuration for the Service
 type ServiceConfig struct {
-	WorkerCount      int
-	JobQueueSize     int
-	DefaultQuality   int
-	DefaultFormat    string
-	DefaultAlgorithm string
-	EnableMetrics    bool
+	WorkerCount            int
+	JobQueueSize           int
+	DefaultQuality         int
+	DefaultFormat          string
+	DefaultAlgorithm       string
+	EnableMetrics          bool
+	ImageProcessingTimeout time.Duration
+	BatchProcessingTimeout time.Duration
+	MaxUploadSize          int64
+	MaxBatchSize           int
 }
 
 // NewServiceWithConfig creates a new service with the given configuration
@@ -73,11 +83,15 @@ func NewServiceWithConfig(config ServiceConfig) *Service {
 	}
 
 	return &Service{
-		workerPool:       workerPool,
-		processor:        processor,
-		defaultQuality:   config.DefaultQuality,
-		defaultFormat:    config.DefaultFormat,
-		defaultAlgorithm: config.DefaultAlgorithm,
+		workerPool:             workerPool,
+		processor:              processor,
+		defaultQuality:         config.DefaultQuality,
+		defaultFormat:          config.DefaultFormat,
+		defaultAlgorithm:       config.DefaultAlgorithm,
+		imageProcessingTimeout: config.ImageProcessingTimeout,
+		batchProcessingTimeout: config.BatchProcessingTimeout,
+		maxUploadSize:          config.MaxUploadSize,
+		maxBatchSize:           config.MaxBatchSize,
 	}
 }
 

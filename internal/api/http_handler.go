@@ -1,43 +1,18 @@
 package api
 
 import (
-	"archive/zip"
-	"bytes"
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"log"
-	"mime/multipart"
 	"net/http"
-	"path/filepath"
-	"sync"
-	"time"
 
 	"github.com/teamleaderleo/potato-quality-image-compressor/internal/metrics"
 )
 
-const (
-	maxUploadSize = 32 << 20 // 32 MB
-	maxBatchSize  = 50       // Maximum number of files in batch
-)
-
-// BatchProcessError represents an error during batch processing
-type BatchProcessError struct {
-	Filename string
-	Error    error
-}
-
-// BatchResult represents a result from batch image processing
-type BatchResult struct {
-	filename string
-	result   CompressionResult
-}
-
-// HandleBatchCompress handles batch image compression requests
+// HandleBatchCompress handles batch image compression requests via HTTP
 func (s *Service) HandleBatchCompress(w http.ResponseWriter, r *http.Request) {
 	// Create a context with timeout
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(r.Context(), s.batchProcessingTimeout)
 	defer cancel()
 
 	timer := metrics.NewTimer("batch-compress")
@@ -55,9 +30,9 @@ func (s *Service) HandleBatchCompress(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Limit the max upload size
-	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+	r.Body = http.MaxBytesReader(w, r.Body, s.maxUploadSize)
 
-	err := r.ParseMultipartForm(maxUploadSize)
+	err := r.ParseMultipartForm(s.maxUploadSize)
 	if err != nil {
 		status = "bad_request"
 		http.Error(w, "Unable to parse form: "+err.Error(), http.StatusBadRequest)
@@ -71,28 +46,36 @@ func (s *Service) HandleBatchCompress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(files) > maxBatchSize {
+	if len(files) > s.maxBatchSize {
 		status = "bad_request"
-		http.Error(w, fmt.Sprintf("Too many files. Maximum is %d", maxBatchSize), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("Too many files. Maximum is %d", s.maxBatchSize), http.StatusBadRequest)
 		return
 	}
 
 	// Parse parameters
 	quality, format, algorithm := s.parseParameters(r)
 
-	// Process the batch of images
-	results, processingErrors := s.processBatchImages(ctx, files, format, quality, algorithm)
+	// Convert multipart files to batch requests
+	requests, err := ConvertFilesToBatchRequests(files, format, quality, algorithm)
+	if err != nil {
+		status = "batch_preparation_failed"
+		http.Error(w, "Error preparing batch: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
+	// Process the batch of images using the unified processor
+	batchResponse := s.ProcessBatchRequests(ctx, requests)
+	
 	// If all files failed, return an error
-	if len(results) == 0 && len(processingErrors) > 0 {
+	if len(batchResponse.Results) == 0 && len(batchResponse.ProcessingErrors) > 0 {
 		status = "batch_processing_failed"
-		errMsg := fmt.Sprintf("Failed to process all %d images", len(processingErrors))
+		errMsg := fmt.Sprintf("Failed to process all %d images", len(batchResponse.ProcessingErrors))
 		http.Error(w, errMsg, http.StatusInternalServerError)
 		return
 	}
 
 	// Create zip file from results
-	zipData, err := createZipFromResults(results, format)
+	zipData, err := CreateZipFromResults(batchResponse.Results)
 	if err != nil {
 		status = "zip_error"
 		http.Error(w, "Error creating zip file: "+err.Error(), http.StatusInternalServerError)
@@ -100,12 +83,12 @@ func (s *Service) HandleBatchCompress(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Record metrics for all successful compressions
-	for _, result := range results {
+	for _, result := range batchResponse.Results {
 		metrics.RecordCompressionRatio(
-			format,
-			result.result.AlgorithmUsed,
-			result.result.OriginalSize,
-			result.result.CompressedSize,
+			result.Format,
+			result.AlgorithmUsed,
+			result.OriginalSize,
+			result.CompressedSize,
 		)
 	}
 
@@ -118,148 +101,9 @@ func (s *Service) HandleBatchCompress(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Log processing errors for debugging
-	if len(processingErrors) > 0 {
-		for _, procErr := range processingErrors {
+	if len(batchResponse.ProcessingErrors) > 0 {
+		for _, procErr := range batchResponse.ProcessingErrors {
 			log.Printf("Error processing %s: %v", procErr.Filename, procErr.Error)
 		}
 	}
-}
-
-// processBatchImages processes multiple images concurrently
-func (s *Service) processBatchImages(
-	ctx context.Context,
-	files []*multipart.FileHeader,
-	format string,
-	quality int,
-	algorithm string,
-) ([]BatchResult, []BatchProcessError) {
-	var (
-		results          []BatchResult
-		processingErrors []BatchProcessError
-		resultsMutex     sync.Mutex
-		errorsMutex      sync.Mutex
-		wg               sync.WaitGroup
-		// Limit concurrency to number of workers
-		sem = make(chan struct{}, s.workerPool.TotalWorkerCount())
-	)
-
-	for _, fileHeader := range files {
-		wg.Add(1)
-
-		go func(fh *multipart.FileHeader) {
-			defer wg.Done()
-
-			// Acquire semaphore slot
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			// Check if context is cancelled
-			if ctx.Err() != nil {
-				errorsMutex.Lock()
-				processingErrors = append(processingErrors, BatchProcessError{
-					Filename: fh.Filename,
-					Error:    ctx.Err(),
-				})
-				errorsMutex.Unlock()
-				return
-			}
-
-			file, err := fh.Open()
-			if err != nil {
-				errorsMutex.Lock()
-				processingErrors = append(processingErrors, BatchProcessError{
-					Filename: fh.Filename,
-					Error:    err,
-				})
-				errorsMutex.Unlock()
-				return
-			}
-			defer file.Close()
-
-			fileBytes, err := io.ReadAll(file)
-			if err != nil {
-				errorsMutex.Lock()
-				processingErrors = append(processingErrors, BatchProcessError{
-					Filename: fh.Filename,
-					Error:    err,
-				})
-				errorsMutex.Unlock()
-				return
-			}
-
-			// Create a new context with a timeout for each image
-			fileCtx, fileCancel := context.WithTimeout(ctx, 30*time.Second)
-			defer fileCancel()
-
-			// Process the image
-			result, err := s.CompressImage(
-				fileCtx,
-				fh.Filename,
-				bytes.NewReader(fileBytes),
-				format,
-				quality,
-				algorithm,
-			)
-
-			if err != nil {
-				errorsMutex.Lock()
-				processingErrors = append(processingErrors, BatchProcessError{
-					Filename: fh.Filename,
-					Error:    err,
-				})
-				errorsMutex.Unlock()
-				return
-			}
-
-			resultsMutex.Lock()
-			results = append(results, BatchResult{
-				filename: fh.Filename,
-				result:   result,
-			})
-			resultsMutex.Unlock()
-		}(fileHeader)
-	}
-
-	// Wait for all processing to complete
-	wg.Wait()
-
-	return results, processingErrors
-}
-
-// createZipFromResults creates a zip file from batch processing results
-func createZipFromResults(results []BatchResult, format string) ([]byte, error) {
-	if len(results) == 0 {
-		return nil, errors.New("no valid results to create zip file")
-	}
-
-	// Create a buffer for the zip file
-	buf := new(bytes.Buffer)
-	zipWriter := zip.NewWriter(buf)
-
-	// Add each result to the zip
-	for _, r := range results {
-		if r.result.Error != nil {
-			continue // Skip failed results
-		}
-
-		zipFile, err := zipWriter.Create(fmt.Sprintf("%s.%s",
-			filepath.Base(r.filename),
-			format,
-		))
-		if err != nil {
-			return nil, fmt.Errorf("creating zip entry: %w", err)
-		}
-
-		_, err = zipFile.Write(r.result.Data)
-		if err != nil {
-			return nil, fmt.Errorf("writing to zip: %w", err)
-		}
-	}
-
-	// Close the zip writer
-	if err := zipWriter.Close(); err != nil {
-		return nil, fmt.Errorf("closing zip writer: %w", err)
-	}
-
-	return buf.Bytes(), nil
 }

@@ -5,7 +5,6 @@ import (
 	"context"
 	"io"
 	"runtime"
-	"sync"
 	"time"
 
 	"github.com/teamleaderleo/potato-quality-image-compressor/internal/api"
@@ -103,26 +102,49 @@ func (a *Adapter) BatchCompressImages(ctx context.Context, req *pb.BatchCompress
 		}, nil
 	}
 	
-	// Process each image using goroutines
-	responses := make([]*pb.CompressImageResponse, len(req.Requests))
-	var wg sync.WaitGroup
-	
-	for i, imageReq := range req.Requests {
-		wg.Add(1)
-		
-		go func(idx int, r *pb.CompressImageRequest) {
-			defer wg.Done()
-			
-			// Process using CompressImage to reuse logic
-			resp, _ := a.CompressImage(ctx, r)
-			
-			// Store in the correct position
-			responses[idx] = resp
-		}(i, imageReq)
+	// Convert protobuf requests to BatchRequest objects
+	batchRequests := make([]api.BatchRequest, len(req.Requests))
+	for i, protoReq := range req.Requests {
+		batchRequests[i] = api.BatchRequest{
+			Filename:  protoReq.Filename,
+			Data:      bytes.NewReader(protoReq.ImageData),
+			Format:    string(protoReq.Format),
+			Quality:   int(protoReq.Quality),
+			Algorithm: string(protoReq.Strategy),
+		}
 	}
 	
-	// Wait for all processing to complete
-	wg.Wait()
+	// Process using the unified batch processor
+	batchResponse := a.service.ProcessBatchRequests(ctx, batchRequests)
+	
+	// Convert results to protobuf responses
+	responses := make([]*pb.CompressImageResponse, 0, len(batchResponse.Results))
+	for _, result := range batchResponse.Results {
+		resp := &pb.CompressImageResponse{
+			ImageData:        result.Data,
+			Format:           result.Format,
+			OriginalSize:     int64(result.OriginalSize),
+			CompressedSize:   int64(result.CompressedSize),
+			CompressionRatio: result.CompressionRatio,
+			ProcessingTimeMs: result.ProcessingTime.Milliseconds(),
+			Filename:         result.Filename,
+		}
+		responses = append(responses, resp)
+	}
+	
+	// Handle errors
+	if len(batchResponse.ProcessingErrors) > 0 {
+		status = "partial_success"
+		
+		// Add error responses
+		for _, err := range batchResponse.ProcessingErrors {
+			errorResp := &pb.CompressImageResponse{
+				Error:    err.Error.Error(),
+				Filename: err.Filename,
+			}
+			responses = append(responses, errorResp)
+		}
+	}
 	
 	return &pb.BatchCompressResponse{
 		Responses:             responses,

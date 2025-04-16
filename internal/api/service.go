@@ -120,7 +120,7 @@ func (s *Service) CompressImage(
 	// Create a new context with a timeout if not already set
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		ctx, cancel = context.WithTimeout(ctx, s.imageProcessingTimeout)
 		defer cancel()
 	}
 
@@ -161,7 +161,7 @@ func (s *Service) CompressImage(
 			return CompressionResult{Error: ErrInvalidResultType}, ErrInvalidResultType
 		}
 		
-		// Return the result
+		// Return the result with the new fields
 		return CompressionResult{
 			Data:             compressionResult.Data(),
 			Error:            nil,
@@ -170,6 +170,8 @@ func (s *Service) CompressImage(
 			CompressedSize:   compressionResult.CompressedSize(),
 			CompressionRatio: compressionResult.CompressionRatio(),
 			AlgorithmUsed:    compressionResult.AlgorithmUsed(),
+			Filename:         filename,
+			Format:           format,
 		}, nil
 		
 	case err := <-errChan:

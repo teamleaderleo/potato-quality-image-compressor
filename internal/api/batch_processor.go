@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"path/filepath"
 	"time"
+	"strings"
 	"sync"
 )
 
@@ -154,18 +155,30 @@ func CreateZipFromResults(results []CompressionResult) ([]byte, error) {
 	buf := new(bytes.Buffer)
 	zipWriter := zip.NewWriter(buf)
 
+	// Create a map to track name counts in case of duplicates
+	nameCounts := make(map[string]int)
+
 	// Add each result to the zip
 	for _, result := range results {
 		if result.Error != nil {
 			continue // Skip failed results
 		}
 
-		// Use the original filename with the new format extension
-		zipFilename := fmt.Sprintf("%s.%s", 
-			filepath.Base(result.Filename), 
-			result.Format,
-		)
-		
+		// Generate a unique filename for the zip entry
+		baseName := strings.TrimSuffix(filepath.Base(result.Filename), filepath.Ext(result.Filename))
+		ext := result.Format
+
+		count := nameCounts[baseName]
+		nameCounts[baseName]++
+
+		var zipFilename string
+		if count == 0 {
+			zipFilename = fmt.Sprintf("%s.%s", baseName, ext)
+		} else {
+			zipFilename = fmt.Sprintf("%s_%d.%s", baseName, count, ext)
+		}
+
+		// Create a zip file header
 		zipHeader := &zip.FileHeader{
 			Name:     zipFilename,
 			Method:   zip.Deflate,

@@ -13,6 +13,7 @@ services:
       - METRICS_ENABLED=true
       - PROMETHEUS_ENABLED=true
       - METRICS_ENDPOINT=/metrics
+      - MAX_UPLOAD_SIZE=104857600
     restart: unless-stopped
     networks:
       - monitoring-net

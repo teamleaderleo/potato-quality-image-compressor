@@ -9,7 +9,6 @@ services:
     environment:
       - HTTP_ENABLED=true
       - GRPC_ENABLED=true
-      - WORKER_COUNT=4
       - METRICS_ENABLED=true
       - PROMETHEUS_ENABLED=true
       - METRICS_ENDPOINT=/metrics

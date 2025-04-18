@@ -18,7 +18,7 @@ echo
 # Check if test image exists
 if [ ! -f "$TEST_IMAGE" ]; then
     echo -e "${RED}Error: Test image '$TEST_IMAGE' not found!${NC}"
-    echo "Please place a JPEG image named 'test.jpg' in the current directory."
+    echo "Please place a PNG image named 'test.png' in the current directory."
     exit 1
 fi
 
@@ -26,23 +26,22 @@ fi
 echo "Creating $NUM_IMAGES test images for batch processing..."
 TOTAL_SIZE=0
 for i in $(seq 1 $NUM_IMAGES); do
-    cp "$TEST_IMAGE" "batch_test_${i}.jpg"
+    cp "$TEST_IMAGE" "batch_test_${i}.png"
     
-    # Get size of the file
-    FILE_SIZE=$(stat -c%s "batch_test_${i}.jpg" 2>/dev/null || stat -f%z "batch_test_${i}.jpg")
+    FILE_SIZE=$(stat -c%s "batch_test_${i}.png" 2>/dev/null || stat -f%z "batch_test_${i}.png")
     TOTAL_SIZE=$((TOTAL_SIZE + FILE_SIZE))
 done
 
 echo "Total size of all images: $TOTAL_SIZE bytes"
 echo
 
-# First, test individual processing
+# Test individual processing
 echo -e "${BLUE}First testing sequential processing of $NUM_IMAGES images...${NC}"
 SEQUENTIAL_START=$(date +%s.%N)
 
 for i in $(seq 1 $NUM_IMAGES); do
     echo "Processing image $i individually..."
-    curl -s -X POST -F "image=@batch_test_${i}.jpg" -F "quality=80" -F "format=webp" \
+    curl -s -X POST -F "image=@batch_test_${i}.png" -F "quality=80" -F "format=webp" \
          "$SERVICE_URL/compress" -o "sequential_${i}.webp"
 done
 
@@ -52,20 +51,24 @@ SEQUENTIAL_TIME=$(echo "$SEQUENTIAL_END - $SEQUENTIAL_START" | bc)
 echo "Sequential processing complete in $SEQUENTIAL_TIME seconds"
 echo
 
-# Now test batch processing
+# Test batch processing
 echo -e "${BLUE}Now testing batch processing of the same $NUM_IMAGES images...${NC}"
 BATCH_START=$(date +%s.%N)
 
-# Prepare curl command with multiple file parameters
-CURL_CMD="curl -s -X POST"
+# Build curl args as an array (safe and quote-proof)
+CURL_ARGS=(-s -X POST)
 for i in $(seq 1 $NUM_IMAGES); do
-    CURL_CMD="$CURL_CMD -F \"images=@batch_test_${i}.jpg\""
+    CURL_ARGS+=(-F "images=@batch_test_${i}.png")
 done
-CURL_CMD="$CURL_CMD -F \"quality=80\" -F \"format=webp\" \"$SERVICE_URL/batch-compress\" -o batch_result.zip"
+CURL_ARGS+=(-F "quality=80" -F "format=webp" "$SERVICE_URL/batch-compress" -o batch_result.zip)
 
-# Execute the curl command
+# Execute curl
 echo "Sending batch request..."
-eval $CURL_CMD
+curl "${CURL_ARGS[@]}"
+
+echo -e "\n--- batch_result.zip (first 200 bytes) ---"
+head -c 200 batch_result.zip
+echo -e "\n--- end ---"
 
 BATCH_END=$(date +%s.%N)
 BATCH_TIME=$(echo "$BATCH_END - $BATCH_START" | bc)
@@ -95,7 +98,7 @@ if [ -f "batch_result.zip" ] && [ -s "batch_result.zip" ]; then
         echo -e "${RED}Expected $NUM_IMAGES files but found $FILE_COUNT${NC}"
     fi
 else
-    echo -e "${RED}Batch processing failed or returned empty result${NC}"
+    echo -e "${RED}Batch processing failed or returned an invalid ZIP${NC}"
 fi
 
 echo
@@ -109,7 +112,7 @@ fi
 # Clean up
 echo
 echo "Cleaning up test files..."
-rm -f batch_test_*.jpg sequential_*.webp batch_result.zip
+rm -f batch_test_*.png sequential_*.webp batch_result.zip
 rm -rf batch_output
 
 echo

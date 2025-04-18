@@ -9,6 +9,7 @@ import (
 	"io"
 	"mime/multipart"
 	"path/filepath"
+	"time"
 	"sync"
 )
 
@@ -165,7 +166,14 @@ func CreateZipFromResults(results []CompressionResult) ([]byte, error) {
 			result.Format,
 		)
 		
-		zipFile, err := zipWriter.Create(zipFilename)
+		zipHeader := &zip.FileHeader{
+			Name:     zipFilename,
+			Method:   zip.Deflate,
+			Modified: time.Now(),
+		}
+
+		zipFile, err := zipWriter.CreateHeader(zipHeader)
+
 		if err != nil {
 			return nil, fmt.Errorf("creating zip entry: %w", err)
 		}

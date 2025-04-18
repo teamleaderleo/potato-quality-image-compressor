@@ -4,8 +4,8 @@
 # Configuration
 SERVICE_URL="http://localhost:8080"
 TEST_IMAGE="test.png"  # Using PNG
-REQUESTS=12            # Number of concurrent requests
-WORKER_COUNT=4         # Should match our service configuration
+REQUESTS=16            # Number of concurrent requests
+WORKER_COUNT=16         # Should match our service configuration
 
 # Terminal colors
 GREEN='\033[0;32m'

@@ -112,7 +112,7 @@ func LoadConfig() AppConfig {
 		},
 		HttpEnabled:   getBoolWithDefault("HTTP_ENABLED", true),
 		GrpcEnabled:   getBoolWithDefault("GRPC_ENABLED", false),
-		GrpcPort:      getEnvWithDefault("GRPC_PORT", "9090"),
+		GrpcPort:      getEnvWithDefault("GRPC_PORT", "9000"),
 		ShutdownDelay: getDurationWithDefault("SHUTDOWN_DELAY", 30*time.Second),
 	}
 }

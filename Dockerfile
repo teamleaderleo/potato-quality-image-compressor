@@ -14,7 +14,11 @@ RUN go mod download
 COPY . .
 
 # Build the Go app
-RUN go build -o main .
+RUN go build -o main ./cmd/server
+
+# Expose ports
+EXPOSE 8080
+EXPOSE 9090
 
 # Command to run the executable
 CMD ["./main"]

@@ -5,7 +5,7 @@ services:
     build: .
     ports:
       - "8080:8080"
-      - "9090:9090"
+      - "9000:9000"
     environment:
       - HTTP_ENABLED=true
       - GRPC_ENABLED=true

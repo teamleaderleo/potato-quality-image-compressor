@@ -4,7 +4,7 @@
 # Configuration
 SERVICE_URL="http://localhost:8080"
 TEST_IMAGE="test.png"  # Original test image
-NUM_IMAGES=5          # Number of test images to create for batch testing
+NUM_IMAGES=10          # Number of test images to create for batch testing
 
 # Terminal colors
 GREEN='\033[0;32m'

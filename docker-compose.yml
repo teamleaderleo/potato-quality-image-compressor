@@ -1,12 +1,27 @@
-version: '3'
+version: '3.8'
+
 services:
   image-compression-service:
     build: .
     ports:
       - "8080:8080"
+      - "9090:9090"
+    environment:
+      - HTTP_ENABLED=true
+      - GRPC_ENABLED=true
+      - WORKER_COUNT=4
+      - METRICS_ENABLED=true
+      - PROMETHEUS_ENABLED=true
+      - METRICS_ENDPOINT=/metrics
     restart: unless-stopped
     networks:
       - monitoring-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   prometheus:
     image: prom/prometheus
@@ -17,6 +32,8 @@ services:
     restart: unless-stopped
     networks:
       - monitoring-net
+    depends_on:
+      - image-compression-service
 
   grafana:
     image: grafana/grafana
@@ -24,6 +41,9 @@ services:
       - grafana-data:/var/lib/grafana
     ports:
       - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_USER=admin
     restart: unless-stopped
     depends_on:
       - prometheus

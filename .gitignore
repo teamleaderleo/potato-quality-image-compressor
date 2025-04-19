@@ -25,3 +25,17 @@
 
 # Ignore compressed .webp
 *.webp
+
+# Ignore node_modules folder
+node_modules/
+
+# Ignore build artifacts
+/build/
+
+# Ignore bin
+/bin
+
+# Ignore encoding files
+encoded.txt
+test_base64.txt
+payload.json

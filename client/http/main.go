@@ -14,7 +14,7 @@ import (
 
 const (
 	url            = "http://localhost:8080/compress"
-	imagePath      = "assets/test.png"
+	imagePath      = "test/assets/test.png"
 	totalRequests  = 100
 	concurrency    = 16
 	requestTimeout = 15 * time.Second

@@ -14,7 +14,7 @@ import (
 
 const (
 	address        = "localhost:9000"
-	imagePath      = "assets/test.png"
+	imagePath      = "test/assets/test.png"
 	totalRequests  = 100
 	concurrency    = 16
 	requestTimeout = 15 * time.Second
@@ -60,7 +60,7 @@ func main() {
 		log.Fatalf("Failed to read image: %v", err)
 	}
 
-	conn, err := grpc.Dial(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("Failed to connect to gRPC server: %v", err)
 	}

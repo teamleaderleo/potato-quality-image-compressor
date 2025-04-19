@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"runtime"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -21,6 +22,10 @@ import (
 )
 
 func main() {
+	// Set GOMAXPROCS to the number of available CPUs
+	// This forces docker to use all available CPU cores
+	runtime.GOMAXPROCS(runtime.NumCPU())
+	
 	// Load configuration
 	cfg := config.LoadConfig()
 
@@ -134,7 +139,10 @@ func startHTTPServer(server *http.Server) {
 // setupGRPCServer creates and configures the gRPC server
 func setupGRPCServer(service *api.Service, cfg config.AppConfig) *grpcServer.Server {
 	// Create new gRPC server
-	grpcSrv := grpcServer.NewServer()
+	grpcSrv := grpcServer.NewServer(
+		grpcServer.MaxRecvMsgSize(1024*1024*20), // 20 MB
+		grpcServer.MaxSendMsgSize(1024*1024*20), // 20 MB
+	)
 	
 	// Register services
 	grpc.RegisterServer(grpcSrv, service)

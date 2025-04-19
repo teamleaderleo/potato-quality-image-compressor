@@ -22,12 +22,16 @@ func NewImageProcessor() *ImageProcessor {
 	processor := &ImageProcessor{
 		algorithms: make(map[string]CompressionAlgorithm),
 	}
-	
-	// Register the default algorithm
+
+	// Register default (scale) algorithm
 	scaleAlgorithm := NewScaleAlgorithm()
 	processor.RegisterAlgorithm(scaleAlgorithm)
 	processor.defaultAlgorithm = scaleAlgorithm
-	
+
+	// Register libvips algorithm
+	vipsAlgorithm := NewVipsAlgorithm()
+	processor.RegisterAlgorithm(vipsAlgorithm)
+
 	return processor
 }
 

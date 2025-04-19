@@ -3,7 +3,7 @@
 
 # Configuration
 SERVICE_URL="http://localhost:8080"
-TEST_IMAGE="test.png"  # Original test image
+TEST_IMAGE="test/assets/test.png"  # Original test image
 NUM_IMAGES=16          # Number of test images to create for batch testing
 
 # Terminal colors

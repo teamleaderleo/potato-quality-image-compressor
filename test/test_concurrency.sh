@@ -3,7 +3,7 @@
 
 # Configuration
 SERVICE_URL="http://localhost:8080"
-TEST_IMAGE="test.png"  # Using PNG
+TEST_IMAGE="test/assets/test.png"  # Using PNG
 REQUESTS=16            # Number of concurrent requests
 WORKER_COUNT=16         # Should match our service configuration
 

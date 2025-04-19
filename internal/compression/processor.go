@@ -28,9 +28,9 @@ func NewImageProcessor() *ImageProcessor {
 	processor.RegisterAlgorithm(scaleAlgorithm)
 	processor.defaultAlgorithm = scaleAlgorithm
 
-	// Register libvips algorithm
-	vipsAlgorithm := NewVipsAlgorithm()
-	processor.RegisterAlgorithm(vipsAlgorithm)
+	// // Register libvips algorithm
+	// vipsAlgorithm := NewVipsAlgorithm()
+	// processor.RegisterAlgorithm(vipsAlgorithm)
 
 	return processor
 }
